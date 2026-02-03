@@ -658,11 +658,34 @@ contract DepositRouter is EIP712, ReentrancyGuard {
             intent.deadline
         );
 
+        // For cross-chain deposits via LI.FI:
+        // LI.FI may either: (1) send tokens to our contract first, or (2) approve tokens and expect us to pull
+        // We handle both cases by checking balance first, then trying to pull if needed
         uint256 contractBalance = IERC20(intent.asset).balanceOf(address(this));
-        require(contractBalance >= intent.amount, "Insufficient tokens in contract");
 
-        uint256 feeAmount = (intent.amount * FEE_BPS) / 10000;
-        uint256 depositAmount = intent.amount - feeAmount;
+        if (contractBalance == 0) {
+            // No tokens in contract - try to pull from caller (LI.FI executor)
+            // LI.FI may have approved tokens to this contract
+            uint256 allowance = IERC20(intent.asset).allowance(msg.sender, address(this));
+            if (allowance >= intent.amount) {
+                // Pull tokens from LI.FI executor
+                IERC20(intent.asset).safeTransferFrom(msg.sender, address(this), intent.amount);
+                contractBalance = intent.amount;
+            } else if (allowance > 0) {
+                // Pull whatever is approved
+                IERC20(intent.asset).safeTransferFrom(msg.sender, address(this), allowance);
+                contractBalance = allowance;
+            } else {
+                revert("No tokens received and no allowance from caller");
+            }
+        }
+
+        // Use the minimum of contract balance and intent amount to handle slippage
+        // If more tokens arrived, we only use what was intended; if less, we use what's available
+        uint256 actualAmount = contractBalance < intent.amount ? contractBalance : intent.amount;
+
+        uint256 feeAmount = (actualAmount * FEE_BPS) / 10000;
+        uint256 depositAmount = actualAmount - feeAmount;
 
         if (feeAmount > 0) {
             IERC20(intent.asset).safeTransfer(FEE_COLLECTOR, feeAmount);
@@ -789,11 +812,34 @@ contract DepositRouter is EIP712, ReentrancyGuard {
             intent.deadline
         );
 
+        // For cross-chain deposits via LI.FI:
+        // LI.FI may either: (1) send tokens to our contract first, or (2) approve tokens and expect us to pull
+        // We handle both cases by checking balance first, then trying to pull if needed
         uint256 contractBalance = IERC20(intent.asset).balanceOf(address(this));
-        require(contractBalance >= intent.amount, "Insufficient tokens in contract");
 
-        uint256 feeAmount = (intent.amount * FEE_BPS) / 10000;
-        uint256 depositAmount = intent.amount - feeAmount;
+        if (contractBalance == 0) {
+            // No tokens in contract - try to pull from caller (LI.FI executor)
+            // LI.FI may have approved tokens to this contract
+            uint256 allowance = IERC20(intent.asset).allowance(msg.sender, address(this));
+            if (allowance >= intent.amount) {
+                // Pull tokens from LI.FI executor
+                IERC20(intent.asset).safeTransferFrom(msg.sender, address(this), intent.amount);
+                contractBalance = intent.amount;
+            } else if (allowance > 0) {
+                // Pull whatever is approved
+                IERC20(intent.asset).safeTransferFrom(msg.sender, address(this), allowance);
+                contractBalance = allowance;
+            } else {
+                revert("No tokens received and no allowance from caller");
+            }
+        }
+
+        // Use the minimum of contract balance and intent amount to handle slippage
+        // If more tokens arrived, we only use what was intended; if less, we use what's available
+        uint256 actualAmount = contractBalance < intent.amount ? contractBalance : intent.amount;
+
+        uint256 feeAmount = (actualAmount * FEE_BPS) / 10000;
+        uint256 depositAmount = actualAmount - feeAmount;
 
         if (feeAmount > 0) {
             IERC20(intent.asset).safeTransfer(FEE_COLLECTOR, feeAmount);

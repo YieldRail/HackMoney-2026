@@ -1,11 +1,14 @@
-import { createConfig, getQuote, getStatus, type Quote } from '@lifi/sdk'
+import { createConfig, getQuote as sdkGetQuote, getStatus, type Quote } from '@lifi/sdk'
 import { Address, formatUnits } from 'viem'
 
 const LIFI_API_KEY = process.env.NEXT_PUBLIC_LIFI_API_KEY || ''
 
 createConfig({
   integrator: 'Yieldo',
+  apiKey: LIFI_API_KEY,
 })
+
+export const getQuote = sdkGetQuote
 
 function getLifiHeaders(): HeadersInit {
   return {
@@ -120,7 +123,8 @@ export interface DepositQuote {
     feeCosts: number
     executionDuration?: number
   }>
-  hasContractCall?: boolean // Indicates if this quote includes a contract call (swap + deposit in one)
+  hasContractCall?: boolean
+  usedBridge?: string
 }
 
 export async function getDepositQuote(
@@ -283,8 +287,32 @@ export async function checkTransferStatus(
 }
 
 export function getBridgeFromQuote(quote: Quote | null): string {
-  if (!quote?.steps) return 'stargate'
-  
+  if (!quote) return 'stargate'
+
+  const fromChainId = quote.action?.fromChainId || (quote as any).fromChainId
+  const toChainId = quote.action?.toChainId || (quote as any).toChainId
+  const isSameChain = fromChainId && toChainId && fromChainId === toChainId
+
+  if (isSameChain) {
+    if ((quote as any).includedSteps) {
+      for (const step of (quote as any).includedSteps) {
+        if (step.type === 'swap' && step.tool) {
+          return step.toolDetails?.name || step.tool
+        }
+      }
+    }
+    if (quote.steps) {
+      for (const step of quote.steps) {
+        if (step.type === 'swap' && step.tool) {
+          return step.toolDetails?.name || step.tool
+        }
+      }
+    }
+    return 'DEX Aggregator'
+  }
+
+  if (!quote.steps) return 'stargate'
+
   for (const step of quote.steps) {
     if (step.type === 'cross' || step.type === 'lifi') {
       if (step.tool && step.tool !== 'lifi') {
@@ -295,7 +323,7 @@ export function getBridgeFromQuote(quote: Quote | null): string {
       }
     }
   }
-  
+
   for (const step of quote.steps) {
     if (step.includedSteps) {
       for (const included of step.includedSteps) {
@@ -305,7 +333,7 @@ export function getBridgeFromQuote(quote: Quote | null): string {
       }
     }
   }
-  
+
   return quote.steps[0]?.tool || 'stargate'
 }
 
@@ -340,7 +368,6 @@ export async function checkBridgeSupportsContractCalls(
       }]),
     })
     
-    // If bridge name is provided, try to filter by it
     if (bridgeName && bridgeName !== 'lifi') {
       params.append('allowedBridges', bridgeName)
     }
@@ -355,7 +382,6 @@ export async function checkBridgeSupportsContractCalls(
     }
     
     const quote = await response.json()
-    // Check if we got a valid quote with transaction request
     return !!(quote && quote.transactionRequest)
   } catch (error) {
     console.log(`Error checking contract call support for bridge ${bridgeName || 'unknown'}:`, error)
@@ -363,11 +389,6 @@ export async function checkBridgeSupportsContractCalls(
   }
 }
 
-/**
- * Get a quote with contract call using LI.FI's contractCalls API
- * Uses POST /v1/quote/contractCalls endpoint with JSON body
- * Documentation: https://docs.li.fi/api-reference/perform-multiple-contract-calls-across-blockchains-beta
- */
 export async function getQuoteWithContractCall(
   fromChainId: number,
   fromToken: Address,
@@ -425,28 +446,19 @@ export async function getQuoteWithContractCall(
     }
 
     if (!isSameChain) {
-      let allowedBridges = preferredBridges?.filter(b => !unsupportedBridges.includes(b.toLowerCase()))
-      
-      if (!allowedBridges || allowedBridges.length === 0) {
-        allowedBridges = ['stargate', 'hop', 'across']
-      }
-      
-      const validBridges = ['stargate', 'hop', 'across']
-      allowedBridges = allowedBridges.filter(b => validBridges.includes(b.toLowerCase()))
-      
-      if (allowedBridges.length > 0) {
-        requestBody.allowBridges = allowedBridges
-      } else {
-        console.warn('No valid bridges for contract calls, letting LI.FI choose automatically')
-      }
-      
       if (preferredBridges && preferredBridges.length > 0) {
         const preferredFiltered = preferredBridges
           .filter(b => !unsupportedBridges.includes(b.toLowerCase()))
-          .filter(b => validBridges.includes(b.toLowerCase()))
+
         if (preferredFiltered.length > 0) {
-          requestBody.preferBridges = preferredFiltered
+          requestBody.allowBridges = preferredFiltered
+          console.log('📌 Strict bridge mode: only allowing', preferredFiltered)
+        } else {
+          console.warn('Preferred bridge is unsupported, falling back to defaults')
+          requestBody.allowBridges = ['stargate', 'hop', 'across']
         }
+      } else {
+        requestBody.allowBridges = ['stargate', 'hop', 'across']
       }
     }
 
@@ -479,7 +491,6 @@ export async function getQuoteWithContractCall(
         return null // Return null to trigger fallback
       }
       
-      // Check for invalid bridge name errors
       if (errorData.code === 1011 || errorData.message?.includes('allowBridges')) {
         console.error('Invalid bridge name in allowBridges:', {
           error: errorData.message,
@@ -488,7 +499,6 @@ export async function getQuoteWithContractCall(
           fromChain: fromChainId,
           toChain: toChainId,
         })
-        // Try again without allowBridges to let LI.FI choose automatically
         if (requestBody.allowBridges) {
           console.log('Retrying without allowBridges constraint...')
           const retryBody = { ...requestBody }
@@ -518,13 +528,11 @@ export async function getQuoteWithContractCall(
 
     const quote = await response.json()
 
-    // Verify the quote has a transaction request
     if (!quote || !quote.transactionRequest) {
       console.error('Contract call quote missing transaction request')
       return null
     }
 
-    // Verify the bridge in the quote supports contract calls (only for cross-chain)
     let bridgeName: string | null = null
     if (!isSameChain) {
       bridgeName = getBridgeFromQuote(quote)
@@ -533,7 +541,6 @@ export async function getQuoteWithContractCall(
         return null
       }
     } else {
-      // For same-chain, extract the tool/provider name from steps
       const swapStep = quote.includedSteps?.find((step: any) => step.type === 'swap')
       if (swapStep) {
         bridgeName = swapStep.toolDetails?.name || swapStep.tool || 'DEX Aggregator'

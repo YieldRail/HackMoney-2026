@@ -61,7 +61,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.BASE_DEPOSIT_ROUTER_ADDRESS || '0xd3E807e3eDef90a380a947a5464dD34bb1Cb9cC7',
+    depositRouter: process.env.BASE_DEPOSIT_ROUTER_ADDRESS || '0xb21d8Ed1a7e2c7d919f50bC2A4B547BC66fAa669',
     rpcUrls: [
       process.env.BASE_RPC_URL || 'https://base.meowrpc.com',
       'https://base.llamarpc.com',

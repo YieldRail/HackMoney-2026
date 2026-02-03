@@ -8,8 +8,7 @@ import { useSearchParams } from 'next/navigation'
 import { parseUnits, formatUnits, Address, createPublicClient, http, encodeFunctionData } from 'viem'
 import { avalanche, mainnet, base, optimism, arbitrum, bsc } from 'viem/chains'
 import { VAULTS_CONFIG, getVaultById, type VaultConfig } from '@/lib/vaults-config'
-import { SUPPORTED_CHAINS, getTokensForChain, getDepositQuote, checkTransferStatus, getBridgeFromQuote, getQuoteWithContractCall, type TokenInfo, type DepositQuote } from '@/lib/lifi'
-import { getQuote } from '@lifi/sdk'
+import { SUPPORTED_CHAINS, getTokensForChain, getDepositQuote, checkTransferStatus, getBridgeFromQuote, getQuoteWithContractCall, getQuote, type TokenInfo, type DepositQuote } from '@/lib/lifi'
 import { getVaultState } from '@/lib/lagoon'
 import { useVaults } from '@/hooks/useVaults'
 import { fetchMorphoVaultData } from '@/lib/morpho'
@@ -329,7 +328,11 @@ function VaultsPageContent() {
                 feeCosts: step.estimate?.feeCosts?.reduce((acc: number, cost: any) => acc + parseFloat(cost.amountUSD || '0'), 0) || 0,
                 executionDuration: step.estimate?.executionDuration,
               })) || []
-              
+
+              // Extract the bridge that was used for this quote - we'll reuse it for the fresh quote
+              const usedBridge = getBridgeFromQuote(contractCallQuote)
+              console.log('📌 Quote used bridge:', usedBridge)
+
               quoteResult = {
                 quote: contractCallQuote,
                 estimatedShares,
@@ -343,6 +346,7 @@ function VaultsPageContent() {
                 steps: contractCallQuote.includedSteps?.length || contractCallQuote.steps?.length || 0,
                 stepDetails, // Add detailed step information
                 hasContractCall: true, // Mark that this quote includes contract call
+                usedBridge, // Store the bridge for reuse when fetching fresh quote
               }
               console.log('✅ Got contract call quote (swap + deposit in one transaction):', quoteResult)
             } else {
@@ -1349,12 +1353,35 @@ function VaultsPageContent() {
         const functionName = selectedVault.hasSettlement
           ? 'depositWithIntentCrossChainRequest'
           : (isERC4626 ? 'depositWithIntentCrossChainERC4626' : 'depositWithIntentCrossChain')
+
+        console.log('=== DEPOSIT INTENT DEBUG ===')
+        console.log('Vault type:', selectedVault.type)
+        console.log('Is ERC4626:', isERC4626)
+        console.log('Function name:', functionName)
+        console.log('Intent:', {
+          user: intent.user,
+          vault: intent.vault,
+          asset: intent.asset,
+          amount: intent.amount.toString(),
+          nonce: intent.nonce.toString(),
+          deadline: intent.deadline.toString(),
+        })
+        console.log('Deposit Router:', depositRouterAddress)
+        console.log('Signature:', signature)
+
         const callData = encodeFunctionData({
           abi: DEPOSIT_ROUTER_ABI,
           functionName,
           args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
         })
-        
+
+        console.log('Encoded callData (first 200 chars):', callData.substring(0, 200))
+        console.log('CallData length:', callData.length)
+
+        // Use the same bridge that worked for the initial quote to maximize success rate
+        const preferredBridges = quote.usedBridge ? [quote.usedBridge] : undefined
+        console.log('📌 Using preferred bridges for fresh quote:', preferredBridges)
+
         const freshQuote = await getQuoteWithContractCall(
           fromChainId,
           fromToken.address,
@@ -1364,48 +1391,238 @@ function VaultsPageContent() {
           address,
           depositRouterAddress,
           callData,
-          undefined,
+          preferredBridges, // Force the same bridge that worked initially
           slippage / 100
         )
         
         if (!freshQuote || !freshQuote.transactionRequest) {
-          throw new Error('Failed to get contract call quote with signature. Please try again.')
-        }
-        
-        // For contract call quotes, skip gas estimation because:
-        // 1. LI.FI handles the complex multi-step transaction (swap + contract call)
-        // 2. Tokens arrive during transaction execution, not before
-        // 3. Gas estimation can't properly simulate this flow
-        // We'll use LI.FI's gas estimate from the quote instead
-        console.log('Skipping gas estimation for contract call quote (using LI.FI gas estimate)')
-        
-        // Optional: Try to validate, but don't fail on "Insufficient tokens" error
-        // This error is expected during simulation because tokens arrive during execution
-        try {
-          setExecutionStatus('Validating transaction...')
-          const freshTxValue = BigInt(freshQuote.transactionRequest.value || '0')
-          await publicClient?.estimateGas({
-            account: address!,
-            to: freshQuote.transactionRequest.to as Address,
-            data: freshQuote.transactionRequest.data as `0x${string}`,
-            value: freshTxValue,
+          console.warn('=== CONTRACT CALL QUOTE FAILED - FALLING BACK TO TWO-STEP PROCESS ===')
+          console.warn('Fresh quote:', freshQuote)
+          console.warn('Will bridge first, then user completes deposit on destination chain')
+
+          // Fall back to two-step process: bridge first, then deposit
+          setExecutionStatus('⚠️ One-step deposit unavailable. Switching to bridge + deposit flow...')
+
+          // Get a regular quote (without contract call) for bridging
+          const regularQuote = await getQuote({
+            fromChain: fromChainId,
+            fromToken: fromToken.address,
+            fromAmount: parseUnits(amount, fromToken.decimals).toString(),
+            toChain: selectedVault.chainId,
+            toToken: selectedVault.asset.address as Address,
+            fromAddress: address,
+            slippage: slippage / 100,
+            order: 'RECOMMENDED',
           })
-          console.log('Gas estimation successful')
-        } catch (gasError: any) {
-          const errorMsg = gasError?.shortMessage || gasError?.message || ''
-          // "Insufficient tokens in contract" is expected for contract call quotes
-          // because tokens arrive during transaction execution, not before
-          if (errorMsg.includes('Insufficient tokens in contract')) {
-            console.log('Gas estimation shows "Insufficient tokens" - this is expected for contract call quotes. Tokens will arrive during execution.')
-            // Allow transaction to proceed - LI.FI will handle the flow correctly
-          } else {
-            // For other errors, log but still allow (LI.FI's quote should be valid)
-            console.warn('Gas estimation warning (non-critical):', errorMsg)
-            // Don't throw - trust LI.FI's quote
+
+          if (!regularQuote || !regularQuote.transactionRequest) {
+            throw new Error('Failed to get quote for bridging. Please try again.')
           }
+
+          // Execute bridge transaction
+          const isNative = fromToken.isNative || isNativeToken(fromToken.address)
+
+          // Approve on source chain if needed
+          if (!isNative) {
+            const sourceChainConfig = chainConfigs[fromChainId]
+            const sourcePublicClient = createPublicClient({
+              chain: sourceChainConfig,
+              transport: http(),
+            })
+
+            const allowance = await sourcePublicClient.readContract({
+              address: fromToken.address,
+              abi: ERC20_ABI,
+              functionName: 'allowance',
+              args: [address!, regularQuote.transactionRequest.to as Address],
+            }) as bigint
+
+            const parsedFromAmount = parseUnits(amount, fromToken.decimals)
+            if (allowance < parsedFromAmount) {
+              setExecutionStatus('Step 2/4: Approving token spend...')
+              setExecutionStep('approving')
+              await updateTransactionState('pending', 'approving')
+
+              const approveHash = await walletClient.writeContract({
+                address: fromToken.address,
+                abi: ERC20_ABI,
+                functionName: 'approve',
+                args: [regularQuote.transactionRequest.to as Address, parsedFromAmount],
+                chainId: fromChainId,
+              })
+
+              setTxHashes(prev => ({ ...prev, approve: approveHash }))
+              setExecutionStatus('Waiting for approval confirmation...')
+              await sourcePublicClient.waitForTransactionReceipt({ hash: approveHash })
+            }
+          }
+
+          // Execute bridge
+          setExecutionStatus('Step 3/4: Please confirm the bridge transaction...')
+          setExecutionStep('bridging')
+          await updateTransactionState('pending', 'bridging')
+
+          const bridgeHash = await walletClient.sendTransaction({
+            to: regularQuote.transactionRequest.to as Address,
+            data: regularQuote.transactionRequest.data as `0x${string}`,
+            value: BigInt(regularQuote.transactionRequest.value || '0'),
+            chainId: fromChainId,
+          })
+
+          setTxHashes(prev => ({ ...prev, bridge: bridgeHash }))
+          setExecutionStatus('Bridge transaction sent! Waiting for confirmation...')
+          await updateTransactionState('pending', 'bridging', undefined, { txHash: bridgeHash, status: 'PENDING' }, bridgeHash)
+
+          // Wait for source chain confirmation
+          const sourceChainConfig = chainConfigs[fromChainId]
+          const sourcePublicClient = createPublicClient({
+            chain: sourceChainConfig,
+            transport: http(),
+          })
+          await sourcePublicClient.waitForTransactionReceipt({ hash: bridgeHash })
+
+          // Store pending deposit info - user will need to complete deposit on destination chain
+          localStorage.setItem(`pending_deposit_${txId}`, JSON.stringify({
+            vaultId: selectedVault.id,
+            vaultAddress: selectedVault.address,
+            assetAddress: selectedVault.asset.address,
+            depositRouterAddress,
+            estimatedAmount: depositAmount.toString(),
+            userAddress: address,
+            intent,
+            signature,
+            functionName,
+            bridgeTxHash: bridgeHash,
+            fromChainId,
+            toChainId: selectedVault.chainId,
+            timestamp: Date.now(),
+          }))
+
+          // Monitor bridge and complete deposit
+          setExecutionStatus('Step 4/4: Waiting for bridge to complete...')
+          setExecutionStep('bridging')
+
+          const bridge = getBridgeFromQuote(regularQuote)
+
+          // Poll for bridge completion
+          let bridgeComplete = false
+          let pollCount = 0
+          const maxPolls = 60 // 5 minutes max
+
+          while (!bridgeComplete && pollCount < maxPolls) {
+            await new Promise(resolve => setTimeout(resolve, 5000))
+            pollCount++
+
+            try {
+              const status = await checkTransferStatus(bridge, fromChainId, selectedVault.chainId, bridgeHash)
+              console.log('Bridge status:', status)
+
+              if (status?.status === 'DONE') {
+                bridgeComplete = true
+                setExecutionStatus('Bridge complete! Now completing vault deposit...')
+              } else if (status?.status === 'FAILED') {
+                throw new Error('Bridge transfer failed')
+              }
+            } catch (err) {
+              console.warn('Error checking bridge status:', err)
+            }
+          }
+
+          if (!bridgeComplete) {
+            // Bridge is taking too long - let user know they can complete deposit later
+            setExecutionStatus('Bridge is taking longer than expected. You can complete the deposit from the Pending Transactions section.')
+            await updateTransactionState('pending', 'pending_deposit', undefined, { txHash: bridgeHash, status: 'PENDING' }, bridgeHash)
+            return
+          }
+
+          // Switch to destination chain and complete deposit
+          if (chainId !== selectedVault.chainId) {
+            setExecutionStatus('Switching to destination chain...')
+            await switchChain?.({ chainId: selectedVault.chainId })
+            await new Promise(resolve => setTimeout(resolve, 3000))
+          }
+
+          // Approve deposit router to spend tokens
+          setExecutionStatus('Approving vault deposit...')
+          setExecutionStep('approving')
+
+          const destChainConfig = chainConfigs[selectedVault.chainId]
+          const destPublicClient = createPublicClient({
+            chain: destChainConfig,
+            transport: http(),
+          })
+
+          // Check allowance and approve if needed
+          const vaultAllowance = await destPublicClient.readContract({
+            address: selectedVault.asset.address as Address,
+            abi: ERC20_ABI,
+            functionName: 'allowance',
+            args: [address!, depositRouterAddress],
+          }) as bigint
+
+          if (vaultAllowance < depositAmount) {
+            const approveHash = await walletClient.writeContract({
+              address: selectedVault.asset.address as Address,
+              abi: ERC20_ABI,
+              functionName: 'approve',
+              args: [depositRouterAddress, depositAmount * 2n], // Approve extra for slippage
+              chainId: selectedVault.chainId,
+            })
+
+            setTxHashes(prev => ({ ...prev, approve: approveHash }))
+            await destPublicClient.waitForTransactionReceipt({ hash: approveHash })
+          }
+
+          // Execute the vault deposit with intent
+          setExecutionStatus('Please confirm the vault deposit...')
+          setExecutionStep('depositing')
+
+          // Use local deposit function (not cross-chain) since tokens are already on destination
+          const localFunctionName = isERC4626 ? 'depositWithIntentERC4626' : 'depositWithIntent'
+
+          const depositHash = await walletClient.writeContract({
+            address: depositRouterAddress,
+            abi: DEPOSIT_ROUTER_ABI,
+            functionName: localFunctionName,
+            args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
+            chainId: selectedVault.chainId,
+          })
+
+          setTxHashes(prev => ({ ...prev, deposit: depositHash }))
+          setExecutionStatus('Deposit transaction sent! Waiting for confirmation...')
+
+          const depositReceipt = await destPublicClient.waitForTransactionReceipt({ hash: depositHash })
+
+          if (depositReceipt.status === 'reverted') {
+            throw new Error('Deposit transaction was reverted')
+          }
+
+          // Success!
+          localStorage.removeItem(`pending_deposit_${txId}`)
+          setExecutionStatus('✅ Deposit complete!')
+          setExecutionStep('done')
+          await updateTransactionState('completed', 'done', undefined, undefined, depositHash)
+
+          setShowSuccess(true)
+          setAmount('')
+          setQuote(null)
+          return
         }
-        
-        // STEP 3: Execute swap + deposit in one transaction
+
+        console.log('=== FRESH QUOTE RECEIVED ===')
+        console.log('Quote transactionRequest.to:', freshQuote.transactionRequest.to)
+        console.log('Quote transactionRequest.value:', freshQuote.transactionRequest.value)
+        console.log('Quote transactionRequest.data length:', freshQuote.transactionRequest.data?.length)
+        console.log('Quote transactionRequest.gasLimit:', freshQuote.transactionRequest.gasLimit)
+        console.log('Quote tool:', freshQuote.tool)
+        console.log('Quote includedSteps:', freshQuote.includedSteps?.length)
+
+        // IMPORTANT: Do NOT run gas estimation for contract call quotes!
+        // Gas estimation will ALWAYS fail because tokens haven't been swapped yet.
+        // LI.FI provides accurate gas estimates in the quote - trust those instead.
+        console.log('Skipping gas estimation - using LI.FI gas estimate (gas estimation would fail because tokens arrive during execution)')
+
+        // STEP 2: Execute swap + deposit in one transaction
         // Note: MetaMask may show "likely to fail" warning due to gas estimation
         // This is a false positive - LI.FI will swap tokens and send them to the contract
         // in the same transaction, so tokens will be available when the deposit function is called
@@ -1417,7 +1634,7 @@ function VaultsPageContent() {
         // This ensures MetaMask uses LI.FI's optimized gas prices instead of its own estimates
         const txRequest = freshQuote.transactionRequest
         const gasParams: any = {}
-        
+
         // Helper to convert hex string or number to BigInt
         const toBigInt = (value: any): bigint | undefined => {
           if (!value) return undefined
@@ -1427,24 +1644,39 @@ function VaultsPageContent() {
           }
           return BigInt(value)
         }
-        
-        // Use LI.FI's gas limit (they've calculated it correctly for the multi-step flow)
+
+        // Use LI.FI's gas limit - add 20% buffer for safety
         if (txRequest.gasLimit) {
-          gasParams.gas = toBigInt(txRequest.gasLimit)
+          const baseGas = toBigInt(txRequest.gasLimit)!
+          gasParams.gas = baseGas + (baseGas * 20n / 100n) // 20% buffer
         }
-        
-        // Use LI.FI's gas price if available (for legacy transactions)
-        if (txRequest.gasPrice) {
-          gasParams.gasPrice = toBigInt(txRequest.gasPrice)
-        }
-        
-        // Use LI.FI's EIP-1559 gas parameters if available (preferred for Base)
-        // These are more accurate than MetaMask's estimates
-        if (txRequest.maxFeePerGas) {
-          gasParams.maxFeePerGas = toBigInt(txRequest.maxFeePerGas)
-        }
-        if (txRequest.maxPriorityFeePerGas) {
-          gasParams.maxPriorityFeePerGas = toBigInt(txRequest.maxPriorityFeePerGas)
+
+        // EIP-1559 chains (Base, Optimism, Arbitrum, Ethereum) should NOT use legacy gasPrice
+        // They need maxFeePerGas and maxPriorityFeePerGas
+        const eip1559Chains = [1, 8453, 10, 42161] // Ethereum, Base, Optimism, Arbitrum
+        const isEip1559Chain = eip1559Chains.includes(fromChainId)
+
+        if (isEip1559Chain) {
+          // Prefer EIP-1559 params, or convert from gasPrice if not available
+          if (txRequest.maxFeePerGas) {
+            gasParams.maxFeePerGas = toBigInt(txRequest.maxFeePerGas)
+            if (txRequest.maxPriorityFeePerGas) {
+              gasParams.maxPriorityFeePerGas = toBigInt(txRequest.maxPriorityFeePerGas)
+            }
+          } else if (txRequest.gasPrice) {
+            // Convert legacy gasPrice to EIP-1559 format
+            const gasPrice = toBigInt(txRequest.gasPrice)!
+            // Add 10% buffer to maxFeePerGas for price fluctuations
+            gasParams.maxFeePerGas = gasPrice + (gasPrice * 10n / 100n)
+            // Priority fee is typically 1-2 gwei on L2s
+            gasParams.maxPriorityFeePerGas = gasPrice > 1000000000n ? 1000000000n : gasPrice / 10n
+          }
+          // Do NOT set gasPrice on EIP-1559 chains - it confuses MetaMask
+        } else {
+          // Legacy chain - use gasPrice
+          if (txRequest.gasPrice) {
+            gasParams.gasPrice = toBigInt(txRequest.gasPrice)
+          }
         }
         
         // Calculate estimated gas cost for logging
@@ -1465,14 +1697,33 @@ function VaultsPageContent() {
           estimatedGasCostUSD: quote.gasCosts || 0,
           note: 'Using LI.FI gas parameters to ensure accurate costs',
         })
-        
-        const swapHash = await walletClient.sendTransaction({
-          to: txRequest.to as Address,
-          data: txRequest.data as `0x${string}`,
-          value: BigInt(txRequest.value || '0'),
-          chainId: fromChainId,
-          ...gasParams, // Spread all gas parameters - this ensures MetaMask uses LI.FI's estimates
-        })
+
+        // Log full transaction request for debugging
+        console.log('=== FULL TRANSACTION REQUEST ===')
+        console.log('To:', txRequest.to)
+        console.log('Value:', txRequest.value)
+        console.log('Data (first 200 chars):', txRequest.data?.substring(0, 200))
+        console.log('Chain ID:', fromChainId)
+        console.log('Gas params:', JSON.stringify(gasParams, (k, v) => typeof v === 'bigint' ? v.toString() : v))
+
+        let swapHash: `0x${string}`
+        try {
+          swapHash = await walletClient.sendTransaction({
+            to: txRequest.to as Address,
+            data: txRequest.data as `0x${string}`,
+            value: BigInt(txRequest.value || '0'),
+            chainId: fromChainId,
+            ...gasParams, // Spread all gas parameters - this ensures MetaMask uses LI.FI's estimates
+          })
+        } catch (sendError: any) {
+          console.error('=== TRANSACTION SEND ERROR ===')
+          console.error('Error:', sendError)
+          console.error('Error message:', sendError?.message)
+          console.error('Error shortMessage:', sendError?.shortMessage)
+          console.error('Error details:', sendError?.details)
+          console.error('Error cause:', sendError?.cause)
+          throw new Error(`Failed to send transaction: ${sendError?.shortMessage || sendError?.message || 'Unknown error'}`)
+        }
         
         console.log('Transaction sent, hash:', swapHash)
         console.log('Transaction details:', {
@@ -1726,7 +1977,13 @@ function VaultsPageContent() {
         }, 10000)
       }
     } catch (error: any) {
-      console.error('Same chain swap deposit error:', error)
+      console.error('=== SAME CHAIN SWAP DEPOSIT ERROR ===')
+      console.error('Error object:', error)
+      console.error('Error message:', error?.message)
+      console.error('Error shortMessage:', error?.shortMessage)
+      console.error('Error details:', error?.details)
+      console.error('Error cause:', error?.cause)
+      console.error('Error stack:', error?.stack)
       const errorMessage = error?.shortMessage || error?.message || 'Transaction failed'
       setExecutionStep('idle')
       setExecutionStatus(`Error: ${errorMessage}`)

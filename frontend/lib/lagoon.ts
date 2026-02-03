@@ -1,8 +1,9 @@
 import { Vault } from '@lagoon-protocol/v0-viem'
 import { VaultUtils } from '@lagoon-protocol/v0-core'
 import { createPublicClient, http, Address } from 'viem'
-import { avalanche, mainnet } from 'viem/chains'
+import { avalanche, mainnet, base, optimism, arbitrum, bsc } from 'viem/chains'
 import { getVaultById } from './vaults-config'
+import type { ChainName } from './vaults-config'
 
 const clients = {
   avalanche: createPublicClient({
@@ -13,16 +14,32 @@ const clients = {
     chain: mainnet,
     transport: http(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://1rpc.io/eth'),
   }),
+  base: createPublicClient({
+    chain: base,
+    transport: http(process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://mainnet.base.org'),
+  }),
+  optimism: createPublicClient({
+    chain: optimism,
+    transport: http(process.env.NEXT_PUBLIC_OPTIMISM_RPC_URL || 'https://mainnet.optimism.io'),
+  }),
+  arbitrum: createPublicClient({
+    chain: arbitrum,
+    transport: http(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc'),
+  }),
+  bsc: createPublicClient({
+    chain: bsc,
+    transport: http(process.env.NEXT_PUBLIC_BSC_RPC_URL || 'https://bsc-dataseed.binance.org'),
+  }),
 }
 
 const vaultStateCache = new Map<string, { state: any; timestamp: number }>()
 const CACHE_TTL = 15 * 1000
 
-export function getClientForChain(chain: 'avalanche' | 'ethereum') {
+export function getClientForChain(chain: ChainName) {
   return clients[chain]
 }
 
-export async function fetchVault(address: Address, chain: 'avalanche' | 'ethereum' = 'avalanche') {
+export async function fetchVault(address: Address, chain: ChainName = 'avalanche') {
   try {
     const client = getClientForChain(chain)
     const vault = await Vault.fetch(address, client)
@@ -37,7 +54,7 @@ export async function getVaultAPR(
   vaultAddress: Address,
   startBlockNumber: bigint,
   endBlockNumber: bigint,
-  chain: 'avalanche' | 'ethereum' = 'avalanche',
+  chain: ChainName = 'avalanche',
   decimals = 18
 ) {
   try {
@@ -69,7 +86,7 @@ export async function getVaultAPR(
   }
 }
 
-export async function getVaultState(vaultAddress: Address, chain: 'avalanche' | 'ethereum' = 'avalanche', forceRefresh = false) {
+export async function getVaultState(vaultAddress: Address, chain: ChainName = 'avalanche', forceRefresh = false) {
   const cacheKey = `${vaultAddress.toLowerCase()}_${chain}`
   const cached = vaultStateCache.get(cacheKey)
   const now = Date.now()
