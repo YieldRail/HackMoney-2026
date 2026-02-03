@@ -76,6 +76,7 @@ let colPendingYieldoWithdrawals;
 let colVaultRatings;
 let colVaultRatingHistory;
 let colCrossChainDeposits;
+let colTransactionStates;
 
 const clients = {};
 const rpcIndices = {};
