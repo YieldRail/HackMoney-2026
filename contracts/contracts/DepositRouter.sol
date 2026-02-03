@@ -165,6 +165,30 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         DepositIntent calldata intent,
         bytes calldata signature
     ) external nonReentrant returns (bytes32 intentHash) {
+        return _depositWithIntent(intent, signature, false);
+    }
+
+    /**
+     * @notice Create and execute deposit for ERC4626 vaults (e.g., Morpho)
+     * @param intent The deposit intent parameters
+     * @param signature The EIP-712 signature
+     * @return intentHash The hash of the deposit intent
+     */
+    function depositWithIntentERC4626(
+        DepositIntent calldata intent,
+        bytes calldata signature
+    ) external nonReentrant returns (bytes32 intentHash) {
+        return _depositWithIntent(intent, signature, true);
+    }
+
+    /**
+     * @notice Internal function to handle deposits for both Lagoon and ERC4626 vaults
+     */
+    function _depositWithIntent(
+        DepositIntent calldata intent,
+        bytes calldata signature,
+        bool isERC4626
+    ) internal returns (bytes32 intentHash) {
         require(intent.user != address(0), "Invalid user address");
         require(intent.vault != address(0), "Invalid vault address");
         require(intent.asset != address(0), "Invalid asset address");
@@ -226,23 +250,38 @@ contract DepositRouter is EIP712, ReentrancyGuard {
 
         IERC20(intent.asset).forceApprove(intent.vault, depositAmount);
 
-        (bool success, bytes memory returnData) = intent.vault.call(
-            abi.encodeWithSignature(
-                "syncDeposit(uint256,address,address)",
-                depositAmount,
-                intent.user,
-                address(0)
-            )
-        );
+        bool success;
+        bytes memory returnData;
+
+        if (isERC4626) {
+            // ERC4626 standard: deposit(uint256 assets, address receiver) returns (uint256 shares)
+            (success, returnData) = intent.vault.call(
+                abi.encodeWithSignature(
+                    "deposit(uint256,address)",
+                    depositAmount,
+                    intent.user
+                )
+            );
+        } else {
+            // Lagoon vault: syncDeposit(uint256,address,address)
+            (success, returnData) = intent.vault.call(
+                abi.encodeWithSignature(
+                    "syncDeposit(uint256,address,address)",
+                    depositAmount,
+                    intent.user,
+                    address(0)
+                )
+            );
+        }
 
         if (!success) {
-            string memory errorMessage = "Vault deposit failed";
-            
+            string memory errorMessage = isERC4626 ? "ERC4626 deposit failed" : "Vault deposit failed";
+
             if (returnData.length > 0) {
-                if (returnData.length >= 4 && 
-                    returnData[0] == 0x08 && 
-                    returnData[1] == 0xc3 && 
-                    returnData[2] == 0x79 && 
+                if (returnData.length >= 4 &&
+                    returnData[0] == 0x08 &&
+                    returnData[1] == 0xc3 &&
+                    returnData[2] == 0x79 &&
                     returnData[3] == 0xa0) {
                     if (returnData.length >= 68) {
                         uint256 errorLength;
@@ -258,10 +297,10 @@ contract DepositRouter is EIP712, ReentrancyGuard {
                         }
                     }
                 } else {
-                    errorMessage = "Vault deposit failed: custom error";
+                    errorMessage = isERC4626 ? "ERC4626 deposit failed: custom error" : "Vault deposit failed: custom error";
                 }
             }
-            
+
             revert(errorMessage);
         }
 
@@ -541,7 +580,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
     }
 
     /**
-     * @notice Cross-chain deposit via LI.FI - accepts tokens already sent to contract
+     * @notice Cross-chain deposit via LI.FI - accepts tokens already sent to contract (Lagoon vaults)
      * @param intent The deposit intent parameters
      * @param signature The EIP-712 signature
      * @return intentHash The hash of the deposit intent
@@ -550,6 +589,30 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         DepositIntent calldata intent,
         bytes calldata signature
     ) external nonReentrant returns (bytes32 intentHash) {
+        return _depositWithIntentCrossChain(intent, signature, false);
+    }
+
+    /**
+     * @notice Cross-chain deposit via LI.FI for ERC4626 vaults (e.g., Morpho)
+     * @param intent The deposit intent parameters
+     * @param signature The EIP-712 signature
+     * @return intentHash The hash of the deposit intent
+     */
+    function depositWithIntentCrossChainERC4626(
+        DepositIntent calldata intent,
+        bytes calldata signature
+    ) external nonReentrant returns (bytes32 intentHash) {
+        return _depositWithIntentCrossChain(intent, signature, true);
+    }
+
+    /**
+     * @notice Internal function to handle cross-chain deposits for both Lagoon and ERC4626 vaults
+     */
+    function _depositWithIntentCrossChain(
+        DepositIntent calldata intent,
+        bytes calldata signature,
+        bool isERC4626
+    ) internal returns (bytes32 intentHash) {
         require(intent.user != address(0), "Invalid user address");
         require(intent.vault != address(0), "Invalid vault address");
         require(intent.asset != address(0), "Invalid asset address");
@@ -608,23 +671,38 @@ contract DepositRouter is EIP712, ReentrancyGuard {
 
         IERC20(intent.asset).forceApprove(intent.vault, depositAmount);
 
-        (bool success, bytes memory returnData) = intent.vault.call(
-            abi.encodeWithSignature(
-                "syncDeposit(uint256,address,address)",
-                depositAmount,
-                intent.user,
-                address(0)
-            )
-        );
+        bool success;
+        bytes memory returnData;
+
+        if (isERC4626) {
+            // ERC4626 standard: deposit(uint256 assets, address receiver) returns (uint256 shares)
+            (success, returnData) = intent.vault.call(
+                abi.encodeWithSignature(
+                    "deposit(uint256,address)",
+                    depositAmount,
+                    intent.user
+                )
+            );
+        } else {
+            // Lagoon vault: syncDeposit(uint256,address,address)
+            (success, returnData) = intent.vault.call(
+                abi.encodeWithSignature(
+                    "syncDeposit(uint256,address,address)",
+                    depositAmount,
+                    intent.user,
+                    address(0)
+                )
+            );
+        }
 
         if (!success) {
-            string memory errorMessage = "Vault deposit failed";
-            
+            string memory errorMessage = isERC4626 ? "ERC4626 deposit failed" : "Vault deposit failed";
+
             if (returnData.length > 0) {
-                if (returnData.length >= 4 && 
-                    returnData[0] == 0x08 && 
-                    returnData[1] == 0xc3 && 
-                    returnData[2] == 0x79 && 
+                if (returnData.length >= 4 &&
+                    returnData[0] == 0x08 &&
+                    returnData[1] == 0xc3 &&
+                    returnData[2] == 0x79 &&
                     returnData[3] == 0xa0) {
                     if (returnData.length >= 68) {
                         uint256 errorLength;
@@ -640,10 +718,10 @@ contract DepositRouter is EIP712, ReentrancyGuard {
                         }
                     }
                 } else {
-                    errorMessage = "Vault deposit failed: custom error";
+                    errorMessage = isERC4626 ? "ERC4626 deposit failed: custom error" : "Vault deposit failed: custom error";
                 }
             }
-            
+
             revert(errorMessage);
         }
 

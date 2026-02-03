@@ -6,6 +6,8 @@ async function main() {
   
   const rpcUrl = hre.network.name === 'mainnet' 
     ? (process.env.ETHEREUM_RPC_URL || "https://rpc.fullsend.to")
+    : hre.network.name === 'base'
+    ? (process.env.BASE_RPC_URL || "https://base.meowrpc.com")
     : (process.env.AVALANCHE_RPC_URL || "https://api.avax.network/ext/bc/C/rpc");
   console.log("RPC URL:", rpcUrl);
 
@@ -14,7 +16,7 @@ async function main() {
 
   try {
     const balance = await hre.ethers.provider.getBalance(deployer.address);
-    const nativeToken = hre.network.name === 'mainnet' ? 'ETH' : 'AVAX';
+    const nativeToken = hre.network.name === 'mainnet' ? 'ETH' : hre.network.name === 'base' ? 'ETH' : 'AVAX';
     console.log("Account balance:", hre.ethers.formatEther(balance), nativeToken);
     
     if (balance === 0n) {
@@ -43,6 +45,8 @@ async function main() {
       console.log("⏳ Waiting for confirmation (this may take 30-60 seconds)...");
       const explorerUrl = hre.network.name === 'mainnet'
         ? `https://etherscan.io/tx/${tx.hash}`
+        : hre.network.name === 'base'
+        ? `https://basescan.org/tx/${tx.hash}`
         : `https://snowtrace.io/tx/${tx.hash}`;
       console.log("   View on explorer:", explorerUrl);
     } else {
@@ -53,7 +57,7 @@ async function main() {
     console.log("✅ Deployment confirmed!");
   } catch (error) {
     console.error("❌ Deployment failed:", error.message);
-    const nativeToken = hre.network.name === 'mainnet' ? 'ETH' : 'AVAX';
+    const nativeToken = hre.network.name === 'mainnet' ? 'ETH' : hre.network.name === 'base' ? 'ETH' : 'AVAX';
     if (error.message.includes("insufficient funds")) {
       console.error(`   Your account doesn't have enough ${nativeToken} for gas fees.`);
     } else if (error.message.includes("network")) {
@@ -78,6 +82,8 @@ async function main() {
 
   const explorerUrl = hre.network.name === 'mainnet'
     ? `https://etherscan.io/address/${address}`
+    : hre.network.name === 'base'
+    ? `https://basescan.org/address/${address}`
     : `https://snowtrace.io/address/${address}`;
   const verifyNetwork = hre.network.name;
   

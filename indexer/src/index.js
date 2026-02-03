@@ -1,6 +1,6 @@
 import express from 'express';
 import { createPublicClient, http, parseAbiItem } from 'viem';
-import { avalanche, mainnet } from 'viem/chains';
+import { avalanche, mainnet, base } from 'viem/chains';
 import { MongoClient } from 'mongodb';
 import cron from 'node-cron';
 import { Vault } from '@lagoon-protocol/v0-viem';
@@ -100,7 +100,7 @@ for (const vault of VAULTS_CONFIG) {
     const primaryRpc = vault.rpcUrls[0];
     try {
       clients[vault.chain] = createPublicClient({
-        chain: vault.chain === 'ethereum' ? mainnet : avalanche,
+        chain: vault.chain === 'ethereum' ? mainnet : vault.chain === 'base' ? base : avalanche,
         transport: http(primaryRpc, {
           timeout: 30000,
           retryCount: 0,
@@ -113,7 +113,7 @@ for (const vault of VAULTS_CONFIG) {
         try {
           console.log(`[${vault.chain}] Trying fallback RPC ${i + 1}: ${vault.rpcUrls[i]}`);
           clients[vault.chain] = createPublicClient({
-            chain: vault.chain === 'ethereum' ? mainnet : avalanche,
+            chain: vault.chain === 'ethereum' ? mainnet : vault.chain === 'base' ? base : avalanche,
             transport: http(vault.rpcUrls[i], {
               timeout: 30000,
               retryCount: 0,
@@ -151,7 +151,7 @@ async function rotateRpcForChain(chain, vaultConfig) {
   
   try {
     clients[chain] = createPublicClient({
-      chain: chain === 'ethereum' ? mainnet : avalanche,
+      chain: chain === 'ethereum' ? mainnet : chain === 'base' ? base : avalanche,
       transport: http(newRpc, {
         timeout: 30000,
         retryCount: 0,
@@ -1682,6 +1682,73 @@ app.get('/api/transaction-states', async (req, res) => {
   }
 });
 
+// Check LI.FI status for a pending transaction
+app.post('/api/transaction-states/:transactionId/check-lifi', async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    
+    const state = await colTransactionStates.findOne({ transaction_id: transactionId });
+    if (!state) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    
+    if (!state.bridge_tx_hash) {
+      return res.status(400).json({ error: 'No bridge transaction hash found' });
+    }
+    
+    // Get chain IDs
+    const chainIds = {
+      'ethereum': 1,
+      'avalanche': 43114,
+      'base': 8453,
+      'optimism': 10,
+      'arbitrum': 42161,
+      'bsc': 56,
+    };
+    
+    const fromChain = chainIds[state.source_chain] || 1;
+    const toChain = chainIds[state.destination_chain] || 43114;
+    
+    // Check LI.FI status
+    const lifiResponse = await fetch(
+      `https://li.quest/v1/status?txHash=${state.bridge_tx_hash}&fromChain=${fromChain}&toChain=${toChain}`
+    );
+    
+    if (!lifiResponse.ok) {
+      return res.status(502).json({ error: 'Failed to fetch LI.FI status' });
+    }
+    
+    const lifiStatus = await lifiResponse.json();
+    
+    // Update the transaction state
+    const newStatus = lifiStatus.status === 'DONE' ? 'completed' : 
+                      lifiStatus.status === 'FAILED' ? 'failed' : 'pending';
+    const newStep = lifiStatus.status === 'DONE' ? 'completed' : 
+                    lifiStatus.status === 'FAILED' ? 'failed' : state.current_step;
+    
+    await colTransactionStates.updateOne(
+      { transaction_id: transactionId },
+      {
+        $set: {
+          status: newStatus,
+          current_step: newStep,
+          lifi_status: JSON.stringify(lifiStatus),
+          updated_at: new Date(),
+        },
+      }
+    );
+    
+    return res.json({
+      success: true,
+      lifiStatus,
+      transactionStatus: newStatus,
+    });
+  } catch (error) {
+    console.error('Error checking LI.FI status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/cross-chain-deposits', async (req, res) => {
   try {
     const {
@@ -1772,7 +1839,7 @@ app.post('/api/withdrawals/backfill-tx', async (req, res) => {
     if (!txHash) {
       return res.status(400).json({ error: 'txHash is required' });
     }
-    const chainsToTry = chain ? [chain] : ['avalanche', 'ethereum'];
+    const chainsToTry = chain ? [chain] : ['avalanche', 'ethereum', 'base'];
     for (const c of chainsToTry) {
       const client = clients[c];
       if (!client) continue;
@@ -2082,7 +2149,7 @@ app.get('/api/debug/tx', async (req, res) => {
     }
     
     if (!chain) {
-      return res.status(400).json({ error: 'chain query parameter is required (avalanche or ethereum)' });
+      return res.status(400).json({ error: 'chain query parameter is required (avalanche, ethereum, or base)' });
     }
 
     const client = clients[chain];

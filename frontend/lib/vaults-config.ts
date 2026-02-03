@@ -1,8 +1,11 @@
+export type VaultType = 'lagoon' | 'morpho-v1' | 'morpho-v2'
+export type ChainName = 'avalanche' | 'ethereum' | 'base' | 'optimism' | 'arbitrum' | 'bsc'
+
 export interface VaultConfig {
   id: string;
   name: string;
   address: string;
-  chain: 'avalanche' | 'ethereum';
+  chain: ChainName;
   chainId: number;
   asset: {
     address: string;
@@ -11,6 +14,9 @@ export interface VaultConfig {
   };
   depositRouter?: string;
   hasSettlement: boolean;
+  type: VaultType;
+  apy?: number;
+  tvl?: string;
 }
 
 export const VAULTS_CONFIG: VaultConfig[] = [
@@ -27,6 +33,7 @@ export const VAULTS_CONFIG: VaultConfig[] = [
     },
     depositRouter: process.env.NEXT_PUBLIC_AVALANCHE_DEPOSIT_ROUTER_ADDRESS || '0xA35A1ca41F74FCf1B634C68d61bA127c86590B20',
     hasSettlement: false,
+    type: 'lagoon',
   },
   {
     id: '9summits-ethereum-usdc',
@@ -41,6 +48,7 @@ export const VAULTS_CONFIG: VaultConfig[] = [
     },
     depositRouter: process.env.NEXT_PUBLIC_ETHEREUM_DEPOSIT_ROUTER_ADDRESS,
     hasSettlement: true,
+    type: 'lagoon',
   },
 ];
 

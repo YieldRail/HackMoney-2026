@@ -50,6 +50,28 @@ export const VAULTS_CONFIG = [
     hasSettlement: true,
     safetyMargin: BigInt(process.env.ETHEREUM_SAFETY_MARGIN || '10'),
   },
+  {
+    id: 'morpho-base-usdc-v2',
+    name: 'Morpho USDC Vault V2',
+    address: '0x7BfA7C4f149E7415b73bdeDfe609237e29CBF34A',
+    chain: 'base',
+    chainId: 8453,
+    asset: {
+      address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      symbol: 'USDC',
+      decimals: 6,
+    },
+    depositRouter: process.env.BASE_DEPOSIT_ROUTER_ADDRESS || '0xd3E807e3eDef90a380a947a5464dD34bb1Cb9cC7',
+    rpcUrls: [
+      process.env.BASE_RPC_URL || 'https://base.meowrpc.com',
+      'https://base.llamarpc.com',
+      'https://1rpc.io/base',
+    ],
+    subgraph: null,
+    hasSettlement: false,
+    type: 'morpho-v2',
+    safetyMargin: BigInt(process.env.BASE_SAFETY_MARGIN || '30'),
+  },
 ];
 
 export function getVaultById(id) {

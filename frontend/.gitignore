@@ -10,6 +10,8 @@ pnpm-lock.yaml
 .env.*.local
 .env.production
 .env.development
+.env*.local
+*.env
 
 # Next.js
 .next/

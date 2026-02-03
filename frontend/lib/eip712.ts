@@ -1,6 +1,4 @@
-import { Address } from 'viem'
-import { signTypedData } from '@wagmi/core'
-import { wagmiConfig } from '@/app/providers'
+import { Address, WalletClient } from 'viem'
 import { keccak256, encodePacked } from 'viem'
 
 const DOMAIN_NAME = 'DepositRouter'
@@ -26,39 +24,63 @@ export interface DepositIntent {
   deadline: bigint
 }
 
+/**
+ * Sign a deposit intent using EIP-712 typed data signing.
+ * 
+ * IMPORTANT: MetaMask and most wallets require the wallet to be on the same chain
+ * as the chainId in the EIP-712 domain. For cross-chain deposits, the caller should
+ * switch to the destination chain before calling this function, then switch back
+ * after signing.
+ */
 export async function signDepositIntent(
   intent: DepositIntent,
-  chainId: number,
-  contractAddress?: Address
+  destinationChainId: number,
+  contractAddress: Address,
+  walletClient: WalletClient
 ): Promise<string> {
-  const verifyingContract = contractAddress || (process.env.NEXT_PUBLIC_DEPOSIT_ROUTER_ADDRESS as Address)
-  
-  if (!verifyingContract) {
-    throw new Error('Contract address not set. Please configure NEXT_PUBLIC_DEPOSIT_ROUTER_ADDRESS in .env')
+  if (!contractAddress) {
+    throw new Error('Contract address is required')
+  }
+
+  if (!walletClient.account) {
+    throw new Error('Wallet not connected')
   }
 
   const domain = {
     name: DOMAIN_NAME,
     version: DOMAIN_VERSION,
-    chainId,
-    verifyingContract,
+    chainId: destinationChainId,
+    verifyingContract: contractAddress,
   }
 
-  const signature = await signTypedData(wagmiConfig, {
-    domain,
-    types: DEPOSIT_INTENT_TYPES,
-    primaryType: 'DepositIntent',
-    message: {
-      user: intent.user,
-      vault: intent.vault,
-      asset: intent.asset,
-      amount: intent.amount,
-      nonce: intent.nonce,
-      deadline: intent.deadline,
-    },
-  })
+  const message = {
+    user: intent.user,
+    vault: intent.vault,
+    asset: intent.asset,
+    amount: intent.amount,
+    nonce: intent.nonce,
+    deadline: intent.deadline,
+  }
 
-  return signature
+  try {
+    const signature = await walletClient.signTypedData({
+      account: walletClient.account,
+      domain,
+      types: DEPOSIT_INTENT_TYPES,
+      primaryType: 'DepositIntent',
+      message,
+    })
+    return signature
+  } catch (error: any) {
+    // Provide a helpful error message if chain mismatch
+    if (error?.message?.includes('chainId') || error?.message?.includes('chain')) {
+      throw new Error(
+        `Chain mismatch: Please ensure your wallet is connected to chain ${destinationChainId} to sign the deposit intent. ` +
+        `Current error: ${error.message}`
+      )
+    }
+    throw error
+  }
 }
 
 export async function getIntentHash(intent: DepositIntent, chainId: number): Promise<`0x${string}`> {

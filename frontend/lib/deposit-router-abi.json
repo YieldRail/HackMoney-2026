@@ -442,6 +442,62 @@
                            "type":  "bytes"
                        }
                    ],
+        "name":  "depositWithIntentERC4626",
+        "outputs":  [
+                        {
+                            "internalType":  "bytes32",
+                            "name":  "intentHash",
+                            "type":  "bytes32"
+                        }
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "components":  [
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "user",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "vault",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "asset",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "amount",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "nonce",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "deadline",
+                                                  "type":  "uint256"
+                                              }
+                                          ],
+                           "internalType":  "struct DepositRouter.DepositIntent",
+                           "name":  "intent",
+                           "type":  "tuple"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "signature",
+                           "type":  "bytes"
+                       }
+                   ],
         "name":  "depositWithIntentRequest",
         "outputs":  [
                         {
@@ -844,6 +900,62 @@
                        }
                    ],
         "name":  "depositWithIntentCrossChain",
+        "outputs":  [
+                        {
+                            "internalType":  "bytes32",
+                            "name":  "intentHash",
+                            "type":  "bytes32"
+                        }
+                    ],
+        "stateMutability":  "nonpayable",
+        "type":  "function"
+    },
+    {
+        "inputs":  [
+                       {
+                           "components":  [
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "user",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "vault",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "address",
+                                                  "name":  "asset",
+                                                  "type":  "address"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "amount",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "nonce",
+                                                  "type":  "uint256"
+                                              },
+                                              {
+                                                  "internalType":  "uint256",
+                                                  "name":  "deadline",
+                                                  "type":  "uint256"
+                                              }
+                                          ],
+                           "internalType":  "struct DepositRouter.DepositIntent",
+                           "name":  "intent",
+                           "type":  "tuple"
+                       },
+                       {
+                           "internalType":  "bytes",
+                           "name":  "signature",
+                           "type":  "bytes"
+                       }
+                   ],
+        "name":  "depositWithIntentCrossChainERC4626",
         "outputs":  [
                         {
                             "internalType":  "bytes32",

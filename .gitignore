@@ -10,6 +10,9 @@ pnpm-lock.yaml
 .env.*.local
 .env.production
 .env.development
+.env*.local
+*.env
+.env.example
 
 # IDE
 .vscode/
@@ -64,3 +67,5 @@ coverage/
 *.key
 *.cert
 
+
+.claude

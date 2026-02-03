@@ -1,23 +1,35 @@
 const hre = require("hardhat");
 
 async function main() {
-  const contractAddress = process.env.CONTRACT_ADDRESS;
+  // Support both environment variable and command line argument
+  let contractAddress = process.env.CONTRACT_ADDRESS;
+  
+  // Check if address was passed as command line argument
+  if (process.argv.length > 2) {
+    const arg = process.argv[process.argv.length - 1];
+    if (arg.startsWith('0x') && arg.length === 42) {
+      contractAddress = arg;
+    }
+  }
   
   if (!contractAddress || !contractAddress.startsWith('0x')) {
     console.error("❌ Contract address required!");
     console.error("\nUsage:");
-    console.error("  CONTRACT_ADDRESS=0x99833702EE87DC29F294E98D2f7561247F02A5cA npx hardhat run scripts/verify.js --network mainnet");
+    console.error("  npx hardhat run scripts/verify.js --network base 0x...");
+    console.error("  CONTRACT_ADDRESS=0x... npx hardhat run scripts/verify.js --network base");
     console.error("\nOr set it in your .env file:");
-    console.error("  CONTRACT_ADDRESS=0x99833702EE87DC29F294E98D2f7561247F02A5cA");
+    console.error("  CONTRACT_ADDRESS=0x...");
     process.exit(1);
   }
 
   const FEE_COLLECTOR = process.env.FEE_COLLECTOR || "0xBEb2986BD5b7ADDB360D0BbdAD9a7DE21854F427";
   
   const network = hre.network.name;
-  const explorerName = network === 'mainnet' ? 'Etherscan' : 'Snowtrace';
+  const explorerName = network === 'mainnet' ? 'Etherscan' : network === 'base' ? 'Basescan' : 'Snowtrace';
   const explorerUrl = network === 'mainnet' 
     ? `https://etherscan.io/address/${contractAddress}#code`
+    : network === 'base'
+    ? `https://basescan.org/address/${contractAddress}#code`
     : `https://snowtrace.io/address/${contractAddress}#code`;
 
   console.log(`Verifying contract at ${contractAddress} on ${explorerName}...`);
