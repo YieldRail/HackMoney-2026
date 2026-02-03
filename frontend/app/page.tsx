@@ -40,14 +40,14 @@ export default function Home() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+          <Link href="/vaults" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors">
+            <h3 className="text-2xl font-bold mb-4">Vaults</h3>
+            <p className="text-gray-700">Deposit any token from any chain into yield vaults</p>
+          </Link>
+
           <Link href="/dashboard" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors">
             <h3 className="text-2xl font-bold mb-4">Dashboard</h3>
             <p className="text-gray-700">Track your deposits, withdrawals, and vault performance</p>
-          </Link>
-
-          <Link href="/kol" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors">
-            <h3 className="text-2xl font-bold mb-4">KOL Landing</h3>
-            <p className="text-gray-700">Simple interface for initiating transactions</p>
           </Link>
         </div>
 
@@ -58,7 +58,8 @@ export default function Home() {
             <li>• Async vault support (Lagoon on Avalanche & Ethereum)</li>
             <li>• Real-time event indexing</li>
             <li>• Daily deterministic snapshots</li>
-            <li>• USDC deposits only</li>
+            <li>• Cross-chain deposits via LI.FI (any token, any chain)</li>
+            <li>• Direct deposits (same token, same chain)</li>
           </ul>
         </div>
 
@@ -72,7 +73,7 @@ export default function Home() {
               const explorerName = vault.chain === 'ethereum' ? 'Etherscan' : 'Snowtrace'
               const rating = getRatingForVault(vault.id, vault.chain)
               return (
-                <div key={vault.id} className="relative overflow-visible bg-gray-50 border border-black p-4">
+                <div key={vault.id} className="relative overflow-visible bg-gray-50 border-2 border-black p-4 hover:bg-gray-100 transition-colors">
                   <div className="absolute top-3 right-3 z-10">
                     {ratingsLoading ? (
                       <span className="text-xs text-gray-400">Loading score…</span>
@@ -90,14 +91,22 @@ export default function Home() {
                   <p className="text-xs text-gray-500 break-all mb-2">
                     Address: {vault.address}
                   </p>
-                  <a 
-                    href={explorerUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:underline inline-block"
-                  >
-                    View on {explorerName} →
-                  </a>
+                  <div className="flex items-center gap-4 mt-3">
+                    <Link
+                      href={`/vaults?vault=${vault.id}`}
+                      className="px-4 py-2 bg-black text-white text-sm font-medium hover:bg-gray-800 transition-colors"
+                    >
+                      Deposit →
+                    </Link>
+                    <a 
+                      href={explorerUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      View on {explorerName}
+                    </a>
+                  </div>
                 </div>
               )
             })}

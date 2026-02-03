@@ -19,7 +19,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.DEPOSIT_ROUTER_ADDRESS || '0x5A1E1cCe3c0f823255a688697A90885245b0043F',
+    depositRouter: process.env.DEPOSIT_ROUTER_ADDRESS || '0xA35A1ca41F74FCf1B634C68d61bA127c86590B20',
     rpcUrls: [
       process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
     ],

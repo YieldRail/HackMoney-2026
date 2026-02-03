@@ -116,6 +116,57 @@ export async function indexDepositRouterEventsForVault(
       console.log(`[${vaultConfig.id}] Deposit executed: ${intentHash} for user ${user}, amount: ${amount.toString()}, tx: ${log.transactionHash}`);
     }
 
+    const crossChainDepositExecutedLogs = await safeGetLogs(vaultConfig, client, {
+      address: vaultConfig.depositRouter,
+      event: parseAbiItem('event CrossChainDepositExecuted(bytes32 indexed intentHash, address indexed user, address indexed vault, uint256 amount, address executor)'),
+      fromBlock,
+      toBlock,
+    });
+
+    for (const log of crossChainDepositExecutedLogs) {
+      const { intentHash, user, vault, amount, executor } = log.args;
+
+      if (vault.toLowerCase() !== vaultConfig.address.toLowerCase()) continue;
+
+      await colIntents.updateOne(
+        { intent_hash: intentHash, chain: vaultConfig.chain, vault_id: vaultConfig.id },
+        { $set: { status: 'executed', executed_at: new Date(), executor: executor } }
+      );
+
+      await colDeposits.updateOne(
+        { transaction_hash: log.transactionHash, chain: vaultConfig.chain, vault_id: vaultConfig.id },
+        {
+          $set: {
+            intent_hash: intentHash,
+            user_address: user,
+            vault_address: vault,
+            vault_id: vaultConfig.id,
+            chain: vaultConfig.chain,
+            vault_name: vaultConfig.name,
+            asset_address: vaultConfig.asset.address,
+            asset_symbol: vaultConfig.asset.symbol,
+            asset_decimals: vaultConfig.asset.decimals,
+            amount: amount.toString(),
+            status: 'executed',
+            block_number: log.blockNumber.toString(),
+            transaction_hash: log.transactionHash,
+            executed_at: new Date(),
+            source: 'yieldo',
+            cross_chain: true,
+            executor: executor,
+          },
+          $setOnInsert: {
+            shares: null,
+            epoch_id: null,
+            created_at: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+      
+      console.log(`[${vaultConfig.id}] Cross-chain deposit executed: ${intentHash} for user ${user}, amount: ${amount.toString()}, tx: ${log.transactionHash}, executor: ${executor}`);
+    }
+
     const depositRequestSubmittedLogs = await safeGetLogs(vaultConfig, client, {
       address: vaultConfig.depositRouter,
       event: parseAbiItem('event DepositRequestSubmitted(bytes32 indexed intentHash, address indexed user, address indexed vault, uint256 amount, uint256 requestId)'),

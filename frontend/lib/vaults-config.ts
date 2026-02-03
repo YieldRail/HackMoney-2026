@@ -25,7 +25,7 @@ export const VAULTS_CONFIG: VaultConfig[] = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.NEXT_PUBLIC_AVALANCHE_DEPOSIT_ROUTER_ADDRESS || process.env.NEXT_PUBLIC_DEPOSIT_ROUTER_ADDRESS,
+    depositRouter: process.env.NEXT_PUBLIC_AVALANCHE_DEPOSIT_ROUTER_ADDRESS || '0xA35A1ca41F74FCf1B634C68d61bA127c86590B20',
     hasSettlement: false,
   },
   {

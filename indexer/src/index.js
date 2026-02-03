@@ -75,6 +75,7 @@ let colMeta;
 let colPendingYieldoWithdrawals;
 let colVaultRatings;
 let colVaultRatingHistory;
+let colCrossChainDeposits;
 
 const clients = {};
 const rpcIndices = {};
@@ -230,6 +231,8 @@ async function initDatabase() {
   colPendingYieldoWithdrawals = db.collection('pending_yieldo_withdrawals');
   colVaultRatings = db.collection('vault_ratings');
   colVaultRatingHistory = db.collection('vault_rating_history');
+  colCrossChainDeposits = db.collection('cross_chain_deposits');
+  colTransactionStates = db.collection('transaction_states');
 
   try {
     await colDeposits.dropIndex('transaction_hash_1').catch(() => {});
@@ -259,6 +262,16 @@ async function initDatabase() {
     colPendingYieldoWithdrawals.createIndex({ user_address: 1, created_at: -1 }),
     colPendingYieldoWithdrawals.createIndex({ transaction_hash: 1, chain: 1 }, { unique: true }),
     colPendingYieldoWithdrawals.createIndex({ created_at: 1 }, { expireAfterSeconds: 3600 }),
+    colCrossChainDeposits.createIndex({ deposit_tx_hash: 1, chain: 1 }, { unique: true }),
+    colCrossChainDeposits.createIndex({ user_address: 1, created_at: -1 }),
+    colCrossChainDeposits.createIndex({ source_chain: 1, destination_chain: 1 }),
+    colCrossChainDeposits.createIndex({ intent_hash: 1, chain: 1 }),
+    colTransactionStates.createIndex({ transaction_id: 1 }, { unique: true }),
+    colTransactionStates.createIndex({ user_address: 1, created_at: -1 }),
+    colTransactionStates.createIndex({ bridge_tx_hash: 1 }),
+    colTransactionStates.createIndex({ swap_tx_hash: 1 }),
+    colTransactionStates.createIndex({ deposit_tx_hash: 1 }),
+    colTransactionStates.createIndex({ status: 1 }),
   ]);
 
   console.log('MongoDB initialized');
@@ -1546,6 +1559,212 @@ app.post('/api/withdrawals/mark-yieldo', async (req, res) => {
 });
 
 // Re-index the block containing a tx to pick up missed Withdraw (or other) events
+app.post('/api/transaction-states', async (req, res) => {
+  try {
+    const {
+      transaction_id,
+      user_address,
+      source_chain,
+      destination_chain,
+      vault_id,
+      vault_address,
+      from_token,
+      from_token_symbol,
+      from_amount,
+      to_token,
+      to_token_symbol,
+      to_amount,
+      swap_tx_hash,
+      bridge_tx_hash,
+      deposit_tx_hash,
+      intent_hash,
+      deposit_router_address,
+      status,
+      current_step,
+      error_message,
+      lifi_status,
+    } = req.body;
+
+    if (!transaction_id || !user_address || !source_chain || !destination_chain) {
+      return res.status(400).json({ error: 'Missing required fields: transaction_id, user_address, source_chain, destination_chain' });
+    }
+
+    const stateData = {
+      transaction_id,
+      user_address: user_address.toLowerCase(),
+      source_chain,
+      destination_chain,
+      vault_id,
+      vault_address: vault_address?.toLowerCase(),
+      from_token: from_token?.toLowerCase(),
+      from_token_symbol,
+      from_amount: from_amount?.toString(),
+      to_token: to_token?.toLowerCase(),
+      to_token_symbol,
+      to_amount: to_amount?.toString(),
+      swap_tx_hash: swap_tx_hash || null,
+      bridge_tx_hash: bridge_tx_hash || null,
+      deposit_tx_hash: deposit_tx_hash || null,
+      intent_hash: intent_hash || null,
+      deposit_router_address: deposit_router_address?.toLowerCase() || null,
+      status: status || 'pending',
+      current_step: current_step || 'initiated',
+      error_message: error_message || null,
+      lifi_status: lifi_status || null,
+      updated_at: new Date(),
+    };
+
+    const result = await colTransactionStates.updateOne(
+      { transaction_id },
+      {
+        $set: stateData,
+        $setOnInsert: {
+          created_at: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+
+    console.log(`✅ Updated transaction state: ${transaction_id} - ${status || 'pending'} (${current_step || 'initiated'})`);
+
+    return res.json({
+      success: true,
+      message: 'Transaction state updated',
+      state: stateData,
+      upserted: result.upsertedCount > 0,
+    });
+  } catch (error) {
+    console.error('Error updating transaction state:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/transaction-states/:transactionId', async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const state = await colTransactionStates.findOne({ transaction_id: transactionId });
+    
+    if (!state) {
+      return res.status(404).json({ error: 'Transaction state not found' });
+    }
+
+    return res.json({ success: true, state });
+  } catch (error) {
+    console.error('Error fetching transaction state:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/transaction-states', async (req, res) => {
+  try {
+    const { user_address, status } = req.query;
+    const query = {};
+    
+    if (user_address) {
+      query.user_address = String(user_address).toLowerCase();
+    }
+    
+    if (status) {
+      query.status = status;
+    }
+
+    const states = await colTransactionStates
+      .find(query)
+      .sort({ created_at: -1 })
+      .limit(50)
+      .toArray();
+
+    return res.json({ success: true, states, count: states.length });
+  } catch (error) {
+    console.error('Error fetching transaction states:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/cross-chain-deposits', async (req, res) => {
+  try {
+    const {
+      user_address,
+      source_chain,
+      destination_chain,
+      vault_id,
+      vault_address,
+      from_token,
+      from_token_symbol,
+      from_amount,
+      to_token,
+      to_token_symbol,
+      to_amount,
+      swap_tx_hash,
+      bridge_tx_hash,
+      deposit_tx_hash,
+      intent_hash,
+      deposit_router_address,
+      executor,
+    } = req.body;
+
+    if (!user_address || !source_chain || !destination_chain) {
+      return res.status(400).json({ error: 'Missing required fields: user_address, source_chain, destination_chain' });
+    }
+
+    if (!swap_tx_hash && !bridge_tx_hash && !deposit_tx_hash) {
+      return res.status(400).json({ error: 'At least one transaction hash (swap_tx_hash, bridge_tx_hash, or deposit_tx_hash) is required' });
+    }
+
+    const depositData = {
+      user_address: user_address.toLowerCase(),
+      source_chain,
+      destination_chain,
+      vault_id,
+      vault_address: vault_address?.toLowerCase(),
+      from_token: from_token?.toLowerCase(),
+      from_token_symbol,
+      from_amount: from_amount?.toString(),
+      to_token: to_token?.toLowerCase(),
+      to_token_symbol,
+      to_amount: to_amount?.toString(),
+      swap_tx_hash: swap_tx_hash || null,
+      bridge_tx_hash: bridge_tx_hash || null,
+      deposit_tx_hash: deposit_tx_hash || null,
+      intent_hash: intent_hash || null,
+      deposit_router_address: deposit_router_address?.toLowerCase() || null,
+      executor: executor?.toLowerCase() || null,
+      chain: destination_chain,
+      updated_at: new Date(),
+    };
+
+    const queryKey = deposit_tx_hash 
+      ? { deposit_tx_hash, chain: destination_chain }
+      : bridge_tx_hash
+      ? { bridge_tx_hash, chain: source_chain }
+      : { swap_tx_hash, chain: source_chain };
+
+    const result = await colCrossChainDeposits.updateOne(
+      queryKey,
+      {
+        $set: depositData,
+        $setOnInsert: {
+          created_at: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+
+    const txHashDisplay = deposit_tx_hash || bridge_tx_hash || swap_tx_hash || 'pending'
+    console.log(`✅ Stored cross-chain deposit: ${txHashDisplay} from ${source_chain} to ${destination_chain}`);
+
+    return res.json({
+      success: true,
+      message: 'Cross-chain deposit stored',
+      deposit: depositData,
+      upserted: result.upsertedCount > 0,
+    });
+  } catch (error) {
+    console.error('Error storing cross-chain deposit:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/withdrawals/backfill-tx', async (req, res) => {
   try {
     const { txHash, chain } = req.body;
