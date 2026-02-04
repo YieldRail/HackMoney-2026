@@ -10,6 +10,7 @@ interface TransactionLoaderProps {
     deposit?: string
   }
   sourceChainId?: number
+  destChainId?: number
 }
 
 const getExplorerUrl = (hash: string, chainId?: number): string => {
@@ -25,7 +26,7 @@ const getExplorerUrl = (hash: string, chainId?: number): string => {
   return `${base}${hash}`
 }
 
-export function TransactionLoader({ step, status, txHashes, sourceChainId }: TransactionLoaderProps) {
+export function TransactionLoader({ step, status, txHashes, sourceChainId, destChainId }: TransactionLoaderProps) {
   if (step === 'idle') return null
 
   const steps = [
@@ -52,7 +53,7 @@ export function TransactionLoader({ step, status, txHashes, sourceChainId }: Tra
         </p>
       </div>
 
-      {/* Progress Bar */}
+     
       <div className="relative h-2 bg-gray-200 rounded-full overflow-hidden">
         <div 
           className={`absolute left-0 top-0 h-full transition-all duration-500 ${isComplete ? 'bg-green-500' : 'bg-blue-500'}`}
@@ -101,6 +102,15 @@ export function TransactionLoader({ step, status, txHashes, sourceChainId }: Tra
               <span className="text-green-600">✓</span>
             </div>
           )}
+          {txHashes.swap && !txHashes.bridge && (
+            <div className="text-xs flex items-center gap-2">
+              <span className="text-gray-600 w-16">Swap:</span>
+              <a href={getExplorerUrl(txHashes.swap, sourceChainId)} target="_blank" rel="noopener noreferrer" className="font-mono text-blue-600 hover:underline">
+                {txHashes.swap.slice(0, 10)}...{txHashes.swap.slice(-6)}
+              </a>
+              {step === 'complete' ? <span className="text-green-600">✓</span> : <span className="text-blue-500">⏳</span>}
+            </div>
+          )}
           {txHashes.bridge && (
             <div className="text-xs flex items-center gap-2">
               <span className="text-gray-600 w-16">Bridge:</span>
@@ -110,10 +120,10 @@ export function TransactionLoader({ step, status, txHashes, sourceChainId }: Tra
               {step === 'complete' || step === 'depositing' ? <span className="text-green-600">✓</span> : <span className="text-blue-500">⏳</span>}
             </div>
           )}
-          {txHashes.deposit && (
+          {txHashes.deposit && txHashes.deposit !== txHashes.swap && (
             <div className="text-xs flex items-center gap-2">
               <span className="text-gray-600 w-16">Deposit:</span>
-              <a href={getExplorerUrl(txHashes.deposit, 43114)} target="_blank" rel="noopener noreferrer" className="font-mono text-blue-600 hover:underline">
+              <a href={getExplorerUrl(txHashes.deposit, destChainId)} target="_blank" rel="noopener noreferrer" className="font-mono text-blue-600 hover:underline">
                 {txHashes.deposit.slice(0, 10)}...{txHashes.deposit.slice(-6)}
               </a>
               <span className="text-green-600">✓</span>
@@ -122,16 +132,16 @@ export function TransactionLoader({ step, status, txHashes, sourceChainId }: Tra
         </div>
       )}
 
-      {/* LI.FI Explorer Link */}
-      {txHashes?.bridge && (
+      {/* LI.FI Explorer Link - show for bridge OR swap transactions */}
+      {(txHashes?.bridge || txHashes?.swap) && (
         <div className="pt-2 border-t border-blue-200">
-          <a 
-            href={`https://scan.li.fi/tx/${txHashes.bridge}`}
+          <a
+            href={`https://scan.li.fi/tx/${txHashes.bridge || txHashes.swap}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-purple-600 hover:underline flex items-center gap-1"
+            className="text-xs text-purple-600 hover:underline flex items-center gap-1 font-medium"
           >
-            Track on LI.FI Explorer ↗
+            🔗 Track on LI.FI Explorer ↗
           </a>
         </div>
       )}

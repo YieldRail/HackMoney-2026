@@ -232,7 +232,9 @@ function VaultsPageContent() {
           })
           
           if (tempQuote) {
-            const toAmountStr = tempQuote.estimate?.toAmount || tempQuote.action?.toAmount || tempQuote.toAmount || '0'
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const q = tempQuote as any
+            const toAmountStr = q.estimate?.toAmount || q.action?.toAmount || q.toAmount || '0'
             const toAmount = BigInt(toAmountStr)
             const feeAmount = (toAmount * BigInt(10)) / BigInt(10000)
             const depositAmount = toAmount - feeAmount
@@ -823,7 +825,7 @@ function VaultsPageContent() {
               abi: ERC20_ABI,
               functionName: 'approve',
               args: [transactionRequest.to as Address, parsedFromAmount],
-              chainId: capturedFromChainId,
+              chain: chainConfigs[capturedFromChainId],
             })
             
             setTxHashes(prev => ({ ...prev, approve: approveHash }))
@@ -840,7 +842,7 @@ function VaultsPageContent() {
           to: transactionRequest.to as Address,
           data: transactionRequest.data as `0x${string}`,
           value: BigInt(transactionRequest.value || '0'),
-          chainId: capturedFromChainId,
+          chain: chainConfigs[capturedFromChainId],
         })
 
         setTxHashes(prev => ({ ...prev, bridge: bridgeHash! }))
@@ -932,7 +934,7 @@ function VaultsPageContent() {
 
         setTimeout(() => {
           clearInterval(pollInterval)
-          if (executionStep !== 'bridge_completed' && executionStep !== 'idle') {
+          if (executionStep !== 'complete' && executionStep !== 'depositing' && executionStep !== 'idle') {
             setExecutionStatus('Bridge is taking longer than expected. Check LI.FI explorer for status.')
             setExecuting(false)
           }
@@ -983,7 +985,7 @@ function VaultsPageContent() {
             abi: ERC20_ABI,
             functionName: 'approve',
             args: [quoteWithCall.transactionRequest.to as Address, parsedFromAmount],
-            chainId: capturedFromChainId,
+            chain: chainConfigs[capturedFromChainId],
           })
           
           setTxHashes(prev => ({ ...prev, approve: approveHash }))
@@ -1002,7 +1004,7 @@ function VaultsPageContent() {
         to: quoteWithCall.transactionRequest.to as Address,
         data: quoteWithCall.transactionRequest.data as `0x${string}`,
         value: BigInt(quoteWithCall.transactionRequest.value || '0'),
-        chainId: capturedFromChainId,
+        chain: chainConfigs[capturedFromChainId],
       })
 
       setTxHashes(prev => ({ ...prev, bridge: bridgeHash! }))
@@ -1128,7 +1130,8 @@ function VaultsPageContent() {
     const apiUrl = process.env.NEXT_PUBLIC_INDEXER_API_URL || 'http://localhost:3001'
     const sourceChainKey = SUPPORTED_CHAINS.find(c => c.id === fromChainId)?.name?.toLowerCase() || 'unknown'
 
-    const updateTransactionState = async (status: string, currentStep: string, errorMessage?: string, swapHash?: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updateTransactionState = async (status: string, currentStep: string, errorMessage?: string, lifiStatusData?: any, bridgeTxHash?: string) => {
       try {
         await fetch(`${apiUrl}/api/transaction-states`, {
           method: 'POST',
@@ -1150,9 +1153,10 @@ function VaultsPageContent() {
             status,
             current_step: currentStep,
             error_message: errorMessage || null,
-            swap_tx_hash: swapHash || txHashes.swap || null,
-            bridge_tx_hash: swapHash || txHashes.swap || null, // Same as swap for tracking
-            deposit_tx_hash: swapHash || txHashes.deposit || null,
+            swap_tx_hash: bridgeTxHash || txHashes.swap || null,
+            bridge_tx_hash: bridgeTxHash || txHashes.swap || null,
+            deposit_tx_hash: bridgeTxHash || txHashes.deposit || null,
+            lifi_status: lifiStatusData ? JSON.stringify(lifiStatusData) : null,
           }),
         })
       } catch (err) {
@@ -1342,7 +1346,7 @@ function VaultsPageContent() {
                 abi: ERC20_ABI,
                 functionName: 'approve',
                 args: [regularQuote.transactionRequest.to as Address, parsedFromAmount],
-                chainId: fromChainId,
+                chain: chainConfigs[fromChainId],
               })
 
               setTxHashes(prev => ({ ...prev, approve: approveHash }))
@@ -1359,7 +1363,7 @@ function VaultsPageContent() {
             to: regularQuote.transactionRequest.to as Address,
             data: regularQuote.transactionRequest.data as `0x${string}`,
             value: BigInt(regularQuote.transactionRequest.value || '0'),
-            chainId: fromChainId,
+            chain: chainConfigs[fromChainId],
           })
 
           setTxHashes(prev => ({ ...prev, bridge: bridgeHash }))
@@ -1451,7 +1455,7 @@ function VaultsPageContent() {
               abi: ERC20_ABI,
               functionName: 'approve',
               args: [depositRouterAddress, depositAmount * 2n], // Approve extra for slippage
-              chainId: selectedVault.chainId,
+              chain: chainConfigs[selectedVault.chainId],
             })
 
             setTxHashes(prev => ({ ...prev, approve: approveHash }))
@@ -1468,7 +1472,7 @@ function VaultsPageContent() {
             abi: DEPOSIT_ROUTER_ABI,
             functionName: localFunctionName,
             args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
-            chainId: selectedVault.chainId,
+            chain: chainConfigs[selectedVault.chainId],
           })
 
           setTxHashes(prev => ({ ...prev, deposit: depositHash }))
@@ -2155,7 +2159,8 @@ function VaultsPageContent() {
                 <h2 className="text-xl font-bold mb-4">Deposit</h2>
 
                 <div className="mb-4">
-                  <PendingTransactions 
+                  <PendingTransactions
+                    excludeTransactionId={transactionId}
                     onResume={async (tx) => {
                       
                       const vault = tx.vault_id ? getVaultById(tx.vault_id) : null
@@ -2302,180 +2307,123 @@ function VaultsPageContent() {
             )}
 
             {quote && !loadingQuote && (
-              <div className="bg-white border-2 border-black rounded-lg p-6 sticky top-6">
-                <h3 className="text-lg font-bold mb-4">Preview</h3>
-
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center pb-4 border-b border-gray-200">
-                    <span className="text-gray-600">You Pay</span>
-                    <div className="text-right">
-                      <p className="font-bold">{amount} {fromToken?.symbol}</p>
-                      <p className="text-sm text-gray-500">on {fromChain?.name}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-center">
-                    <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center">
-                      <span className="text-white">↓</span>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-4 border-t border-gray-200">
-                    <span className="text-gray-600">You Receive</span>
-                    <div className="text-right">
-                      <p className="font-bold text-green-600">
-                        {formatShares(quote.estimatedShares, 18)} Shares
-                      </p>
-                      <p className="text-sm text-gray-500">on {toChain?.name}</p>
-                    </div>
-                  </div>
-
-                  <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Estimated {selectedVault.asset.symbol}</span>
-                      <span className="font-medium">{parseFloat(formatUnits(quote.estimatedAssets, selectedVault.asset.decimals)).toFixed(4)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Protocol Fee (0.1%)</span>
-                      <span className="font-medium">{parseFloat(formatUnits(quote.feeAmount, selectedVault.asset.decimals)).toFixed(4)}</span>
-                    </div>
-                    {quote.feeCosts !== undefined && quote.feeCosts > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Provider Fees</span>
-                        <span className="font-medium">${quote.feeCosts.toFixed(4)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Min. Received</span>
-                      <span className="font-medium">{formatShares(quote.minReceived, 18)} Shares</span>
-                    </div>
-                    {quote.estimatedTime && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-500">Est. Time</span>
-                        <span className="font-medium text-blue-600">{formatTime(quote.estimatedTime)}</span>
-                      </div>
-                    )}
-                    {quote.gasCosts !== undefined && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Estimated Gas Cost</span>
-                        <span className="font-medium">
-                          {quote.gasCosts > 0 ? `$${quote.gasCosts.toFixed(4)}` : 'Included in quote'}
-                        </span>
-                      </div>
-                    )}
-                    {quote.hasContractCall && quote.quote?.transactionRequest && (
-                      <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-                        <p className="text-blue-800">
-                          <strong>Note:</strong> MetaMask may show a higher gas estimate due to its own calculation. 
-                          The actual gas used will be based on LI.FI's optimized route.
-                        </p>
-                        {quote.quote.transactionRequest.gasLimit && (
-                          <p className="text-blue-700 mt-1">
-                            LI.FI Gas Limit: {parseInt(quote.quote.transactionRequest.gasLimit.toString(), 16).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {quote.steps && quote.steps > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Steps</span>
-                        <span className="font-medium">{quote.steps} {quote.steps === 1 ? 'step' : 'steps'}</span>
-                      </div>
-                    )}
-                    {quote.priceImpact !== undefined && quote.priceImpact > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Price Impact</span>
-                        <span className={`font-medium ${quote.priceImpact > 2 ? 'text-red-500' : 'text-yellow-600'}`}>{quote.priceImpact.toFixed(2)}%</span>
-                      </div>
-                    )}
-                    
-                   
-                    {quote.stepDetails && quote.stepDetails.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-gray-300">
-                        <p className="text-xs font-semibold text-gray-700 mb-2">Route Breakdown:</p>
-                        <div className="space-y-2">
-                          {quote.stepDetails.map((step, idx) => (
-                            <div key={idx} className="flex items-start justify-between text-xs">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-1">
-                                  {step.logoURI && (
-                                    <img src={step.logoURI} alt={step.tool} className="w-3 h-3 rounded" />
-                                  )}
-                                  <span className="font-medium text-gray-700">{step.tool}</span>
-                                  <span className="text-gray-500">({step.type})</span>
-                                </div>
-                                {step.fromToken && step.toToken && (
-                                  <span className="text-gray-500 text-xs">
-                                    {step.fromToken} → {step.toToken}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-right text-gray-600">
-                                {step.gasCosts > 0 && <div>Gas: ${step.gasCosts.toFixed(4)}</div>}
-                                {step.feeCosts > 0 && <div>Fee: ${step.feeCosts.toFixed(4)}</div>}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                 
+              <div className="bg-white border-2 border-black rounded-lg p-4 sticky top-6">
+                {/* Compact Header */}
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold">Quote</h3>
                   {quote?.hasContractCall && (
-                    <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded-lg">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-green-600">✨</span>
-                        <span className="text-green-800 font-medium">Automatic Deposit Enabled via LI.FI Composer</span>
-                      </div>
-                      <p className="text-xs text-green-700 mt-1">
-                        {fromChainId === selectedVault.chainId 
-                          ? 'Swap and deposit will happen in one transaction. No manual steps required!'
-                          : 'Your deposit will complete automatically after the bridge. No manual steps required!'}
-                      </p>
-                      <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-                        <p className="font-medium mb-1">⚠️ MetaMask Warning Notice:</p>
-                        <p>MetaMask may show "likely to fail" due to gas estimation. This is a <strong>false positive</strong>. LI.FI will swap tokens and send them to the contract in the same transaction, so the deposit will execute successfully.</p>
-                      </div>
-                    </div>
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✨ Auto-deposit</span>
                   )}
-
-                  {executing && (
-                    <div className="mt-4 space-y-4">
-                      <TransactionLoader 
-                        step={executionStep} 
-                        status={executionStatus}
-                        txHashes={txHashes}
-                        sourceChainId={fromChainId}
-                      />
-                      {transactionId && (
-                        <TransactionStatus 
-                          transactionId={transactionId}
-                          userAddress={address as Address}
-                        />
-                      )}
-                    </div>
-                  )}
-                  {!executing && !transactionId && executionStatus && (
-                    <div className={`rounded-lg p-3 ${
-                      executionStatus.includes('Error') 
-                        ? 'bg-red-50 border border-red-200' 
-                        : 'bg-green-50 border border-green-200'
-                    }`}>
-                      <p className={`text-sm ${
-                        executionStatus.includes('Error') ? 'text-red-800' : 'text-green-800'
-                      }`}>{executionStatus}</p>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleExecute}
-                    disabled={!canExecute}
-                    className="w-full py-4 bg-black text-white rounded-lg font-bold text-lg hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {executing ? 'Processing...' : needsChainSwitch ? 'Switch Network First' : 'Deposit'}
-                  </button>
                 </div>
+
+                {/* Pay/Receive - Compact */}
+                <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-500">Pay</span>
+                    <span className="font-semibold">{amount} {fromToken?.symbol}</span>
+                  </div>
+                  <div className="flex justify-center my-1">
+                    <span className="text-gray-400">↓</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-500">Receive</span>
+                    <span className="font-semibold text-green-600">{formatShares(quote.estimatedShares, 18)} Shares</span>
+                  </div>
+                </div>
+
+                {/* Key Details - Grid */}
+                <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 block">Est. {selectedVault.asset.symbol}</span>
+                    <span className="font-medium">{parseFloat(formatUnits(quote.estimatedAssets, selectedVault.asset.decimals)).toFixed(2)}</span>
+                  </div>
+                  <div className="bg-gray-50 rounded p-2">
+                    <span className="text-gray-500 block">Fee (0.1%)</span>
+                    <span className="font-medium">{parseFloat(formatUnits(quote.feeAmount, selectedVault.asset.decimals)).toFixed(4)}</span>
+                  </div>
+                  {quote.estimatedTime && (
+                    <div className="bg-gray-50 rounded p-2">
+                      <span className="text-gray-500 block">Est. Time</span>
+                      <span className="font-medium text-blue-600">{formatTime(quote.estimatedTime)}</span>
+                    </div>
+                  )}
+                  {quote.gasCosts !== undefined && quote.gasCosts > 0 && (
+                    <div className="bg-gray-50 rounded p-2">
+                      <span className="text-gray-500 block">Gas</span>
+                      <span className="font-medium">${quote.gasCosts.toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Route Info - Collapsible */}
+                {quote.stepDetails && quote.stepDetails.length > 0 && (
+                  <details className="text-xs mb-3">
+                    <summary className="cursor-pointer text-gray-600 hover:text-gray-800 font-medium">
+                      Route: {quote.stepDetails.map(s => s.tool).join(' → ')}
+                    </summary>
+                    <div className="mt-2 pl-2 border-l-2 border-gray-200 space-y-1">
+                      {quote.stepDetails.map((step, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-gray-600">
+                          {step.logoURI && <img src={step.logoURI} alt="" className="w-3 h-3 rounded" />}
+                          <span>{step.tool}</span>
+                          <span className="text-gray-400">({step.type})</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
+                {/* Price Impact Warning */}
+                {quote.priceImpact !== undefined && quote.priceImpact > 1 && (
+                  <div className={`text-xs p-2 rounded mb-3 ${quote.priceImpact > 2 ? 'bg-red-50 text-red-700' : 'bg-yellow-50 text-yellow-700'}`}>
+                    ⚠️ Price impact: {quote.priceImpact.toFixed(2)}%
+                  </div>
+                )}
+
+                {/* MetaMask Notice - Compact */}
+                {quote?.hasContractCall && (
+                  <div className="text-xs p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
+                    <strong>Note:</strong> MetaMask may show "likely to fail" - this is normal. The transaction will succeed.
+                  </div>
+                )}
+
+                {executing && (
+                  <div className="mt-4 space-y-4">
+                    <TransactionLoader
+                      step={executionStep}
+                      status={executionStatus}
+                      txHashes={txHashes}
+                      sourceChainId={fromChainId}
+                      destChainId={selectedVault.chainId}
+                    />
+                    {transactionId && (
+                      <TransactionStatus
+                        transactionId={transactionId}
+                        userAddress={address as Address}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {!executing && !transactionId && executionStatus && (
+                  <div className={`rounded-lg p-3 ${
+                    executionStatus.includes('Error')
+                      ? 'bg-red-50 border border-red-200'
+                      : 'bg-green-50 border border-green-200'
+                  }`}>
+                    <p className={`text-sm ${
+                      executionStatus.includes('Error') ? 'text-red-800' : 'text-green-800'
+                    }`}>{executionStatus}</p>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleExecute}
+                  disabled={!canExecute}
+                  className="w-full mt-4 py-4 bg-black text-white rounded-lg font-bold text-lg hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  {executing ? 'Processing...' : needsChainSwitch ? 'Switch Network First' : 'Deposit'}
+                </button>
               </div>
             )}
 

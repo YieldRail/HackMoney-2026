@@ -1,4 +1,4 @@
-import { createConfig, getQuote as sdkGetQuote, getStatus, type Quote } from '@lifi/sdk'
+import { createConfig, getQuote as sdkGetQuote, getStatus } from '@lifi/sdk'
 import { Address, formatUnits } from 'viem'
 
 const LIFI_API_KEY = process.env.NEXT_PUBLIC_LIFI_API_KEY || ''
@@ -99,7 +99,8 @@ export async function getTokensForChain(chainId: number): Promise<TokenInfo[]> {
 }
 
 export interface DepositQuote {
-  quote: Quote
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  quote: any
   estimatedShares: bigint
   estimatedAssets: bigint
   feeAmount: bigint
@@ -183,13 +184,15 @@ export async function getDepositQuote(
       return null
     }
 
-    const toAmountStr = quote.estimate?.toAmount || 
-                        quote.action?.toAmount || 
-                        quote.toAmount ||
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const q = quote as any
+    const toAmountStr = q.estimate?.toAmount ||
+                        q.action?.toAmount ||
+                        q.toAmount ||
                         '0'
-    const toAmountMinStr = quote.estimate?.toAmountMin || 
-                           quote.action?.toAmountMin || 
-                           quote.toAmountMin ||
+    const toAmountMinStr = q.estimate?.toAmountMin ||
+                           q.action?.toAmountMin ||
+                           q.toAmountMin ||
                            toAmountStr
 
     const toAmount = BigInt(toAmountStr)
@@ -226,14 +229,14 @@ export async function getDepositQuote(
       (acc: number, cost: any) => acc + parseFloat(cost.amountUSD || '0'), 0
     ) || 0
     
-    const fromAmountUSD = parseFloat(quote.estimate?.fromAmountUSD || '1')
-    const toAmountUSD = parseFloat(quote.estimate?.toAmountUSD || '1')
-    const priceImpact = fromAmountUSD > 0 && toAmountUSD > 0 
-      ? Math.abs((fromAmountUSD - toAmountUSD) / fromAmountUSD) * 100 
+    const fromAmountUSD = parseFloat(q.estimate?.fromAmountUSD || '1')
+    const toAmountUSD = parseFloat(q.estimate?.toAmountUSD || '1')
+    const priceImpact = fromAmountUSD > 0 && toAmountUSD > 0
+      ? Math.abs((fromAmountUSD - toAmountUSD) / fromAmountUSD) * 100
       : undefined
 
-    const estimatedTime = quote.estimate?.executionDuration || undefined
-    const steps = quote.steps?.length || 0
+    const estimatedTime = q.estimate?.executionDuration || undefined
+    const steps = q.steps?.length || 0
 
     return {
       quote,
@@ -286,7 +289,8 @@ export async function checkTransferStatus(
   }
 }
 
-export function getBridgeFromQuote(quote: Quote | null): string {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getBridgeFromQuote(quote: any | null): string {
   if (!quote) return 'stargate'
 
   const fromChainId = quote.action?.fromChainId || (quote as any).fromChainId
@@ -389,6 +393,7 @@ export async function checkBridgeSupportsContractCalls(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getQuoteWithContractCall(
   fromChainId: number,
   fromToken: Address,
@@ -400,7 +405,7 @@ export async function getQuoteWithContractCall(
   contractCallData: string,
   preferredBridges?: string[],
   slippage: number = 0.03
-): Promise<Quote | null> {
+): Promise<any | null> {
   try {
     const regularQuote = await getQuote({
       fromChain: fromChainId,
@@ -418,9 +423,11 @@ export async function getQuoteWithContractCall(
       return null
     }
 
-    const toAmountStr = regularQuote.estimate?.toAmount || 
-                        regularQuote.action?.toAmount || 
-                        regularQuote.toAmount || 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rq = regularQuote as any
+    const toAmountStr = rq.estimate?.toAmount ||
+                        rq.action?.toAmount ||
+                        rq.toAmount ||
                         fromAmount
 
     const unsupportedBridges = ['near', 'maya', 'meson', 'socket']

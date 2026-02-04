@@ -88,7 +88,6 @@ export async function fetchMorphoVaults(chainId: number): Promise<MorphoVault[]>
             if (symbolResult) assetSymbol = symbolResult as string
             if (decimalsResult) assetDecimals = decimalsResult as number
           } catch (e) {
-            // Ignore asset fetch errors
           }
         }
         
@@ -151,12 +150,12 @@ export async function fetchMorphoVaultData(vaultAddress: Address, chainId: numbe
         address: vaultAddress,
         abi: ERC4626_ABI,
         functionName: 'totalAssets',
-      }).catch(() => 0n),
+      }).catch(() => 0n) as Promise<bigint>,
       client.readContract({
         address: vaultAddress,
         abi: ERC4626_ABI,
         functionName: 'totalSupply',
-      }).catch(() => 0n),
+      }).catch(() => 0n) as Promise<bigint>,
     ])
     
     let sharePrice: bigint | undefined
@@ -170,7 +169,6 @@ export async function fetchMorphoVaultData(vaultAddress: Address, chainId: numbe
           args: [oneShare],
         }) as bigint
       } catch (e) {
-        // Ignore share price calculation errors
       }
     }
     
