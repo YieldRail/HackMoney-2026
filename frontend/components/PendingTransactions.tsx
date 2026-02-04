@@ -129,7 +129,6 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
           current_step: 'cancelled',
         }),
       })
-      // Remove from local state
       setTransactions(prev => prev.filter(tx => tx.transaction_id !== txId))
     } catch (error) {
       console.error('Error dismissing transaction:', error)
@@ -146,10 +145,8 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
       
       if (response.ok) {
         const data = await response.json()
-        // Refresh the list
         await fetchPendingTransactions()
         
-        // If completed, update local state
         if (data.transactionStatus === 'completed') {
           setTransactions(prev => prev.filter(tx => tx.transaction_id !== txId))
         }
@@ -163,13 +160,19 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
 
   useEffect(() => {
     fetchPendingTransactions()
-    
-    // Poll for updates every 30 seconds
+
     const interval = setInterval(fetchPendingTransactions, 30000)
     return () => clearInterval(interval)
   }, [address])
 
-  if (!isConnected || transactions.length === 0) return null
+  const ONE_HOUR = 60 * 60 * 1000
+  const recentTransactions = transactions.filter(tx => {
+    const createdAt = new Date(tx.created_at).getTime()
+    const now = Date.now()
+    return (now - createdAt) < ONE_HOUR
+  })
+
+  if (!isConnected || recentTransactions.length === 0) return null
 
   return (
     <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg overflow-hidden">
@@ -180,7 +183,7 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
         <div className="flex items-center gap-2">
           <span className="text-xl">⏳</span>
           <span className="font-semibold text-yellow-800">
-            {transactions.length} Pending Transaction{transactions.length > 1 ? 's' : ''}
+            {recentTransactions.length} Pending Transaction{recentTransactions.length > 1 ? 's' : ''}
           </span>
         </div>
         <svg 
@@ -195,7 +198,7 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
 
       {expanded && (
         <div className="border-t border-yellow-300 divide-y divide-yellow-200">
-          {transactions.map((tx) => {
+          {recentTransactions.map((tx) => {
             let lifiStatus = null
             try {
               if (tx.lifi_status) {
@@ -237,24 +240,24 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
                       </div>
                       
                       {tx.bridge_tx_hash && (
-                        <a 
-                          href={getExplorerUrl(tx.bridge_tx_hash, tx.source_chain)}
+                        <a
+                          href={`https://scan.li.fi/tx/${tx.bridge_tx_hash}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline"
+                          className="text-purple-600 hover:underline font-medium"
                         >
-                          View Bridge TX ↗
+                          Track on LI.FI ↗
                         </a>
                       )}
-                      
-                      {lifiStatus?.lifiExplorerLink && (
-                        <a 
-                          href={lifiStatus.lifiExplorerLink}
+
+                      {tx.bridge_tx_hash && (
+                        <a
+                          href={getExplorerUrl(tx.bridge_tx_hash, tx.source_chain)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-600 hover:underline ml-2"
                         >
-                          Track on LI.FI ↗
+                          View on {getChainName(tx.source_chain)} ↗
                         </a>
                       )}
                       
@@ -282,8 +285,6 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
                       </button>
                     )}
                     
-                    {/* With the new LI.FI contract call flow, deposits should complete automatically */}
-                    {/* Only show manual complete option if contract call failed (deposit_pending state) */}
                     {tx.current_step === 'deposit_pending' && (
                       <>
                         {chainId !== chainIds[tx.destination_chain] ? (

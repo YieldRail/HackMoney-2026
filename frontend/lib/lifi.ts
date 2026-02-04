@@ -445,7 +445,29 @@ export async function getQuoteWithContractCall(
       integrator: 'Yieldo',
     }
 
-    if (!isSameChain) {
+    if (isSameChain) {
+      // For same-chain swaps, use allowExchanges (not allowBridges)
+      // Map display names to LI.FI internal exchange IDs
+      const exchangeNameMap: Record<string, string> = {
+        'sushiswap aggregator': 'sushiswap',
+        'sushiswap': 'sushiswap',
+        '1inch': '1inch',
+        'paraswap': 'paraswap',
+        'openocean': 'openocean',
+        '0x': '0x',
+      }
+
+      if (preferredBridges && preferredBridges.length > 0) {
+        const mappedExchanges = preferredBridges
+          .map(b => exchangeNameMap[b.toLowerCase()] || b.toLowerCase())
+          .filter(Boolean)
+
+        if (mappedExchanges.length > 0) {
+          requestBody.allowExchanges = mappedExchanges
+          console.log('📌 Same-chain: allowing exchanges', mappedExchanges)
+        }
+      }
+    } else {
       if (preferredBridges && preferredBridges.length > 0) {
         const preferredFiltered = preferredBridges
           .filter(b => !unsupportedBridges.includes(b.toLowerCase()))
@@ -469,7 +491,8 @@ export async function getQuoteWithContractCall(
       toToken,
       contractAddress,
       allowBridges: requestBody.allowBridges,
-      preferBridges: requestBody.preferBridges,
+      allowExchanges: requestBody.allowExchanges,
+      isSameChain,
     })
 
     const response = await fetch('https://li.quest/v1/quote/contractCalls', {

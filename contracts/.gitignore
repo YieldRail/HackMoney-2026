@@ -1,39 +1,14 @@
 # Dependencies
 node_modules/
-package-lock.json
 
-# Environment variables
+# Environment
 .env
 .env.local
-.env.*.local
 
-# Hardhat files
+# Hardhat
 cache/
 artifacts/
 typechain-types/
-typechain/
-coverage/
-coverage.json
-
-# Build outputs
-build/
-dist/
 
 # Logs
 *.log
-npm-debug.log*
-yarn-debug.log*
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Temporary files
-*.tmp
-*.temp
