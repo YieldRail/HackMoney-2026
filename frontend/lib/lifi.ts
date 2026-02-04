@@ -455,23 +455,29 @@ export async function getQuoteWithContractCall(
     if (isSameChain) {
       // For same-chain swaps, use allowExchanges (not allowBridges)
       // Map display names to LI.FI internal exchange IDs
-      const exchangeNameMap: Record<string, string> = {
+      // Only include exchanges we know are valid in LI.FI
+      const validExchanges: Record<string, string> = {
         'sushiswap aggregator': 'sushiswap',
         'sushiswap': 'sushiswap',
         '1inch': '1inch',
         'paraswap': 'paraswap',
         'openocean': 'openocean',
         '0x': '0x',
+        'uniswap': 'uniswap',
+        'kyberswap': 'kyberswap',
       }
 
       if (preferredBridges && preferredBridges.length > 0) {
         const mappedExchanges = preferredBridges
-          .map(b => exchangeNameMap[b.toLowerCase()] || b.toLowerCase())
-          .filter(Boolean)
+          .map(b => validExchanges[b.toLowerCase()])
+          .filter(Boolean) // Only include if we have a valid mapping
 
         if (mappedExchanges.length > 0) {
           requestBody.allowExchanges = mappedExchanges
           console.log('📌 Same-chain: allowing exchanges', mappedExchanges)
+        } else {
+          // Unknown exchange (like "Nordstern Finance") - let LI.FI pick the best one
+          console.log('📌 Same-chain: no known exchanges, letting LI.FI choose')
         }
       }
     } else {
