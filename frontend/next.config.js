@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev }) => {
     config.resolve.fallback = { 
       fs: false, 
       net: false, 
@@ -28,9 +28,24 @@ const nextConfig = {
     config.ignoreWarnings = [
       { module: /node_modules\/@metamask\/sdk/ },
       { module: /node_modules\/pino/ },
+      { message: /Failed to parse source map/ },
+      { message: /Can't resolve.*vendor-chunks/ },
+      { message: /Resolving.*vendor-chunks.*doesn't lead to expected result/ },
     ];
 
+    if (dev) {
+      config.optimization = {
+        ...config.optimization,
+        removeAvailableModules: false,
+        removeEmptyChunks: false,
+      };
+    }
+
     return config;
+  },
+  onDemandEntries: {
+    maxInactiveAge: 25 * 1000,
+    pagesBufferLength: 2,
   },
 }
 

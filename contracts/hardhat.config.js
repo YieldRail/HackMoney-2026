@@ -22,14 +22,9 @@ module.exports = {
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 1,
     },
-    base: {
-      url: process.env.BASE_RPC_URL || "https://base.meowrpc.com",
-      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-      chainId: 8453,
-    },
   },
   etherscan: {
-    apiKey: process.env.ETHERSCAN_API_KEY || process.env.BASESCAN_API_KEY || "",
+    apiKey: process.env.ETHERSCAN_API_KEY || "",
     customChains: [
       {
         network: "avalanche",
@@ -38,15 +33,6 @@ module.exports = {
           apiURL: "https://api.snowtrace.io/api",
           browserURL: "https://snowtrace.io"
         }
-      },
-      {
-        network: "base",
-        chainId: 8453,
-        urls: {
-          apiURL: "https://api.basescan.org/api",
-          browserURL: "https://basescan.org"
-        },
-        verifyURL: "https://api.basescan.org/api?module=contract&action=verify"
       }
     ]
   },

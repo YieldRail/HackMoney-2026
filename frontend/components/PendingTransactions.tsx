@@ -27,6 +27,7 @@ interface PendingTransaction {
 
 interface PendingTransactionsProps {
   onResume?: (tx: PendingTransaction) => void
+  excludeTransactionId?: string | null // Exclude currently executing transaction
 }
 
 const getExplorerUrl = (hash: string, chain: string): string => {
@@ -88,7 +89,7 @@ const chainIds: Record<string, number> = {
   'bsc': 56,
 }
 
-export function PendingTransactions({ onResume }: PendingTransactionsProps) {
+export function PendingTransactions({ onResume, excludeTransactionId }: PendingTransactionsProps) {
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
   const { switchChain } = useSwitchChain()
@@ -167,6 +168,11 @@ export function PendingTransactions({ onResume }: PendingTransactionsProps) {
 
   const ONE_HOUR = 60 * 60 * 1000
   const recentTransactions = transactions.filter(tx => {
+    // Exclude currently executing transaction (user sees inline progress)
+    if (excludeTransactionId && tx.transaction_id === excludeTransactionId) {
+      return false
+    }
+    // Filter out old transactions
     const createdAt = new Date(tx.created_at).getTime()
     const now = Date.now()
     return (now - createdAt) < ONE_HOUR

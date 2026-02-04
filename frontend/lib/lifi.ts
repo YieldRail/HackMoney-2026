@@ -103,6 +103,8 @@ export interface DepositQuote {
   quote: any
   estimatedShares: bigint
   estimatedAssets: bigint
+  minAssets: bigint  // Minimum assets after slippage and fee
+  toAmountMin: bigint  // Minimum gross amount from bridge (before Yieldo fee) - USE THIS FOR INTENT SIGNING
   feeAmount: bigint
   minReceived: bigint
   priceImpact?: number
@@ -154,11 +156,13 @@ export async function getDepositQuote(
       const feeAmount = (amount * BigInt(10)) / BigInt(10000)
       const depositAmount = amount - feeAmount
       const estimatedShares = calculateShares(depositAmount)
-      
+
       return {
         quote: null as any,
         estimatedShares,
         estimatedAssets: depositAmount,
+        minAssets: depositAmount,  // No slippage for direct deposit
+        toAmountMin: amount,  // No slippage for direct deposit
         feeAmount,
         minReceived: estimatedShares,
         toDecimals: toTokenDecimals,
@@ -242,6 +246,8 @@ export async function getDepositQuote(
       quote,
       estimatedShares,
       estimatedAssets: depositAmount,
+      minAssets: minReceivedAmount,  // Minimum assets after slippage and fee
+      toAmountMin: BigInt(toAmountMinStr),  // Minimum gross amount - USE THIS FOR INTENT SIGNING
       feeAmount,
       minReceived,
       priceImpact,
@@ -313,6 +319,26 @@ export function getBridgeFromQuote(quote: any | null): string {
       }
     }
     return 'DEX Aggregator'
+  }
+
+  // IMPORTANT: First check root-level tool/toolDetails (LI.FI often puts bridge info here)
+  if (quote.tool && quote.tool !== 'lifi') {
+    console.log('📌 Found bridge at root level:', quote.tool)
+    return quote.tool
+  }
+  if (quote.toolDetails?.key && quote.toolDetails.key !== 'lifi') {
+    console.log('📌 Found bridge in toolDetails:', quote.toolDetails.key)
+    return quote.toolDetails.key
+  }
+
+  // Check in includedSteps at root level (for contractCalls quotes)
+  if (quote.includedSteps) {
+    for (const step of quote.includedSteps) {
+      if ((step.type === 'cross' || step.type === 'lifi') && step.tool && step.tool !== 'lifi') {
+        console.log('📌 Found bridge in includedSteps:', step.tool)
+        return step.tool
+      }
+    }
   }
 
   if (!quote.steps) return 'stargate'
@@ -440,13 +466,15 @@ export async function getQuoteWithContractCall(
       toChain: toChainId,
       toToken,
       toAmount: toAmountStr,
+      toAddress: userAddress, // Fallback address if contract call fails
       contractCalls: [{
         fromAmount: toAmountStr,
         fromTokenAddress: toToken,
         toTokenAddress: toToken,
         toContractAddress: contractAddress,
         toContractCallData: contractCallData,
-        toContractGasLimit: '500000',
+        toContractGasLimit: '800000', // Increased gas for deposit operation
+        toApprovalAddress: contractAddress, // CRITICAL: Approve tokens to deposit router before calling
       }],
       slippage,
       integrator: 'Yieldo',
@@ -481,6 +509,8 @@ export async function getQuoteWithContractCall(
         }
       }
     } else {
+      // Cross-chain: only set allowBridges if we have a preferred bridge (during execution)
+      // For initial quote, let LI.FI pick the best bridge from all available options
       if (preferredBridges && preferredBridges.length > 0) {
         const preferredFiltered = preferredBridges
           .filter(b => !unsupportedBridges.includes(b.toLowerCase()))
@@ -489,12 +519,11 @@ export async function getQuoteWithContractCall(
           requestBody.allowBridges = preferredFiltered
           console.log('📌 Strict bridge mode: only allowing', preferredFiltered)
         } else {
-          console.warn('Preferred bridge is unsupported, falling back to defaults')
-          requestBody.allowBridges = ['stargate', 'hop', 'across']
+          console.warn('Preferred bridge is unsupported, letting LI.FI choose best option')
+          // Don't set allowBridges - let LI.FI pick from all available
         }
-      } else {
-        requestBody.allowBridges = ['stargate', 'hop', 'across']
       }
+      // No else - don't set default allowBridges, let LI.FI choose the best bridge
     }
 
     console.log('Requesting contract call quote:', {

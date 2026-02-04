@@ -24,14 +24,6 @@ export interface DepositIntent {
   deadline: bigint
 }
 
-/**
- * Sign a deposit intent using EIP-712 typed data signing.
- * 
- * IMPORTANT: MetaMask and most wallets require the wallet to be on the same chain
- * as the chainId in the EIP-712 domain. For cross-chain deposits, the caller should
- * switch to the destination chain before calling this function, then switch back
- * after signing.
- */
 export async function signDepositIntent(
   intent: DepositIntent,
   destinationChainId: number,
@@ -72,7 +64,6 @@ export async function signDepositIntent(
     })
     return signature
   } catch (error: any) {
-    // Provide a helpful error message if chain mismatch
     if (error?.message?.includes('chainId') || error?.message?.includes('chain')) {
       throw new Error(
         `Chain mismatch: Please ensure your wallet is connected to chain ${destinationChainId} to sign the deposit intent. ` +

@@ -565,12 +565,6 @@ export async function indexVaultEventsForVault(
         }
       }
 
-      // For Morpho vaults, only index deposits from our DepositRouter
-      if (vaultConfig.type && vaultConfig.type.startsWith('morpho') && !isYieldoDeposit) {
-        console.log(`[${vaultConfig.id}] Skipping non-Yieldo Deposit: tx=${log.transactionHash} owner=${owner} assets=${assets.toString()}`);
-        continue;
-      }
-      
       if (!isYieldoDeposit) {
         continue;
       }
@@ -857,36 +851,6 @@ export async function indexVaultEventsForVault(
       const withdrawAssets = BigInt(assetsStr);
       const withdrawShares = BigInt(sharesStr);
 
-      // Skip withdrawals that don't come from our DepositRouter
-      // For Morpho vaults and other non-Lagoon vaults, only index Yieldo withdrawals
-      if (vaultConfig.type && vaultConfig.type.startsWith('morpho')) {
-        // Check if this withdrawal is associated with a Yieldo withdrawal request
-        const existingWithdrawal = await colWithdrawals.findOne({
-          chain: vaultConfig.chain,
-          vault_address: vaultConfig.address.toLowerCase(),
-          user_address: { $in: [owner, ownerLower] },
-          status: { $in: ['settled', 'pending'] },
-        });
-        
-        // Also check if transaction came from DepositRouter
-        let fromRouter = false;
-        if (routerLower && log.transactionHash) {
-          try {
-            const tx = await client.getTransaction({ hash: log.transactionHash });
-            if (tx && tx.from && tx.from.toLowerCase() === routerLower) {
-              fromRouter = true;
-            }
-          } catch (e) {
-            // Ignore errors checking transaction
-          }
-        }
-        
-        // Skip if not from router and no matching withdrawal request
-        if (!fromRouter && !existingWithdrawal) {
-          continue;
-        }
-      }
-
       const baseFilter = {
         chain: vaultConfig.chain,
         vault_address: { $in: [vaultConfig.address, vaultAddrLower] },
@@ -930,12 +894,6 @@ export async function indexVaultEventsForVault(
         );
         console.log(`[${vaultConfig.id}] Withdraw tx=${log.transactionHash} -> marked ${toMark.length} withdrawal(s) as withdrawn (shares sum=${sumShares}, assets sum=${sumAssets})`);
       } else if (toMark.length === 0) {
-        // For Morpho vaults, skip withdrawals that don't come from our DepositRouter
-        if (vaultConfig.type && vaultConfig.type.startsWith('morpho')) {
-          console.log(`[${vaultConfig.id}] Skipping non-Yieldo Withdraw: tx=${log.transactionHash} owner=${owner} assets=${assetsStr} shares=${sharesStr}`);
-          continue;
-        }
-        
         // No matching withdrawals (e.g. RedeemRequest was before indexer start) -> insert one record
         const alreadyInserted = await colWithdrawals.findOne({
           chain: vaultConfig.chain,

@@ -1,0 +1,44 @@
+Section,Type,Parameter or Condition,Input Range,Score or Impact,Formula / Notes,Unit
+COMPOSITE WEIGHTS,,,,"Composite = weighted average of present sub-scores. Weights below.",,
+COMPOSITE WEIGHTS (no trust),Weight,Capital,,0.25,Used when trust score not available,
+COMPOSITE WEIGHTS (no trust),Weight,Performance,,0.35,,
+COMPOSITE WEIGHTS (no trust),Weight,Risk,,0.4,,
+COMPOSITE WEIGHTS (with trust),Weight,Capital,,0.2,When Lagoon + user analytics available,
+COMPOSITE WEIGHTS (with trust),Weight,Performance,,0.3,,
+COMPOSITE WEIGHTS (with trust),Weight,Risk,,0.3,,
+COMPOSITE WEIGHTS (with trust),Weight,Trust,,0.2,,
+CAPITAL,,,,"Score 0–100. Based on TVL USD only.",,
+CAPITAL,TVL tier,TVL (USD),TVL >= 50M,100,Fixed 100,USD
+CAPITAL,TVL tier,TVL (USD),10M <= TVL < 50M,80 to 100,80 + (tvlUsd - 10M) / 40M * 20,USD
+CAPITAL,TVL tier,TVL (USD),1M <= TVL < 10M,50 to 80,50 + (tvlUsd - 1M) / 9M * 30,USD
+CAPITAL,TVL tier,TVL (USD),TVL < 1M,0 to 50,(tvlUsd / 1M) * 50,USD
+PERFORMANCE,,,,"Score 20–100 per APR. Weighted avg: 7d 0.40 / 30d 0.35 / all-time 0.25.",,
+PERFORMANCE,APR,APR (7d),0% to 20%+,20 to 100,20 + min(80, aprPct * 4). aprPct = apr * 100,Weight 0.4
+PERFORMANCE,APR,APR (30d),0% to 20%+,20 to 100,Same formula. 0% APR → 20; 20% APR → 100,Weight 0.35
+PERFORMANCE,APR,APR (all-time),0% to 20%+,20 to 100,Same formula,Weight 0.25
+RISK,,,,"Starts at 100. Subtract penalties. Result min 0.",,
+RISK,Penalty,Vault paused,,-30,Boolean from Lagoon,
+RISK,Penalty,Vault state = Closed,,-50,,
+RISK,Penalty,Asset depeg (price < 0.98),,-40,Underlying USD price. Threshold 0.98,
+RISK,Penalty,Performance fee > 2500 bps,,-10,2500 bps = 25%,
+RISK,Penalty,Whitelist activated,,-5,Boolean from Lagoon,
+TRUST,,,,"Only when Lagoon + user analytics. Base 50; add below; clamp 0–100.",,
+TRUST,Component,Retention rate,0 to 100%,+0 to +20,(retentionRate/100)*20. retentionRate = activeHolders/totalUsers*100,
+TRUST,Component,Avg holding days,0 to 90+ days,+0 to +15 (capped),min(15, (avgHoldingDays/90)*15),
+TRUST,Component,Quick exit rate (inverse),0 to 100%,+0 to +15,(1 - quickExitRate/100)*15. Quick exit = left within 7 days,
+TRUST,Component,Total users,0 to 10+,+totalUsers (cap 10) or +10 if >=10,totalUsers >= 10 ? +10 : +totalUsers,
+TRUST,Component,Holders 90+ days,0 to 5+,+5 if >= 5 else 0,holdersOver90Days >= 5 ? +5 : 0,
+CONSTANTS,,,,"Thresholds used in the above. Change in code: scoring.js, vault-analytics.js, metrics.js",,
+CONSTANTS,Constant,Depeg threshold,0.98,,Risk: asset depeg if price < this,USD
+CONSTANTS,Constant,Performance fee threshold,2500 bps,,Risk: penalty if fee > this,bps
+CONSTANTS,Constant,Quick exit definition,7 days,,Trust: exit within this = quick exit,days
+CONSTANTS,Constant,Long-term holder definition,90 days,,Trust: avg holding cap; holdersOver90Days,days
+CONSTANTS,Constant,APR score: 20% APR maps to,100,,Performance: max sub-score,score
+CONSTANTS,Constant,APR score: 0% base,20,,Performance: min sub-score,score
+CONSTANTS,Constant,Capital TVL tier 1 (max score),50M,,Capital: TVL >= this → 100,USD
+CONSTANTS,Constant,Capital TVL tier 2 min,10M,,Capital: 10M–50M range,USD
+CONSTANTS,Constant,Capital TVL tier 3 min,1M,,Capital: 1M–10M and <1M ranges,USD
+
+
+
+

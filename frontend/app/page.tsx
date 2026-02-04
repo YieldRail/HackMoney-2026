@@ -7,10 +7,8 @@ import { VAULTS_CONFIG } from '@/lib/vaults-config'
 import { VaultRatingBubble } from '@/components/VaultRatingBubble'
 import type { VaultRating } from '@/lib/vault-ratings'
 import { getIndexerApiUrl } from '@/lib/vault-ratings'
-import { useVaults } from '@/hooks/useVaults'
 
 export default function Home() {
-  const { vaults: allVaults } = useVaults()
   const [ratings, setRatings] = useState<VaultRating[]>([])
   const [ratingsLoading, setRatingsLoading] = useState(true)
 
@@ -68,15 +66,12 @@ export default function Home() {
         <div className="border-t border-black pt-8 mt-8 overflow-visible">
           <h3 className="text-xl font-bold mb-4">Integrated Vaults</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 overflow-visible">
-            {allVaults.map((vault) => {
+            {VAULTS_CONFIG.map((vault) => {
               const explorerUrl = vault.chain === 'ethereum'
                 ? `https://etherscan.io/address/${vault.address}`
-                : vault.chain === 'base'
-                ? `https://basescan.org/address/${vault.address}`
                 : `https://snowtrace.io/address/${vault.address}`
-              const explorerName = vault.chain === 'ethereum' ? 'Etherscan' : vault.chain === 'base' ? 'Basescan' : 'Snowtrace'
+              const explorerName = vault.chain === 'ethereum' ? 'Etherscan' : 'Snowtrace'
               const rating = getRatingForVault(vault.id, vault.chain)
-              const vaultTypeLabel = vault.type === 'lagoon' ? 'Lagoon Vault' : vault.type === 'morpho-v1' ? 'Morpho V1 Vault' : vault.type === 'morpho-v2' ? 'Morpho V2 Vault' : 'Vault'
               return (
                 <div key={vault.id} className="relative overflow-visible bg-gray-50 border-2 border-black p-4 hover:bg-gray-100 transition-colors">
                   <div className="absolute top-3 right-3 z-10">
@@ -91,19 +86,8 @@ export default function Home() {
                       />
                     )}
                   </div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <p className="font-semibold text-lg pr-28">{vault.name}</p>
-                    {vault.type === 'lagoon' && (
-                      <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-semibold rounded">Lagoon</span>
-                    )}
-                    {vault.type === 'morpho-v1' && (
-                      <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-xs font-semibold rounded">Morpho V1</span>
-                    )}
-                    {vault.type === 'morpho-v2' && (
-                      <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-xs font-semibold rounded">Morpho V2</span>
-                    )}
-                  </div>
-                  <p className="text-sm text-gray-600 mb-2">{vaultTypeLabel} on {vault.chain.charAt(0).toUpperCase() + vault.chain.slice(1)}</p>
+                  <p className="font-semibold text-lg mb-2 pr-28">{vault.name}</p>
+                  <p className="text-sm text-gray-600 mb-2">Lagoon Vault on {vault.chain.charAt(0).toUpperCase() + vault.chain.slice(1)}</p>
                   <p className="text-xs text-gray-500 break-all mb-2">
                     Address: {vault.address}
                   </p>

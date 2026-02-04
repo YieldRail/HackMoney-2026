@@ -93,7 +93,6 @@ export function TransactionHistory() {
       
       if (response.ok) {
         const data = await response.json()
-        // Sort by created_at descending
         const sorted = (data.states || []).sort((a: Transaction, b: Transaction) => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         )
@@ -158,7 +157,6 @@ export function TransactionHistory() {
 
       {expanded && (
         <>
-          {/* Filters */}
           <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex gap-2">
             {['all', 'completed', 'failed'].map((f) => (
               <button
@@ -182,7 +180,6 @@ export function TransactionHistory() {
             </button>
           </div>
 
-          {/* Transaction List */}
           <div className="border-t border-gray-200 divide-y divide-gray-100 max-h-96 overflow-y-auto">
             {filteredTransactions.length === 0 ? (
               <div className="p-4 text-center text-gray-500 text-sm">
@@ -193,7 +190,6 @@ export function TransactionHistory() {
                 <div key={tx.transaction_id} className="p-4 hover:bg-gray-50 transition-colors">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      {/* Status & Amount */}
                       <div className="flex items-center gap-2 mb-1">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(tx.status)}`}>
                           {getStatusIcon(tx.status)} {tx.status.toUpperCase()}
@@ -207,12 +203,10 @@ export function TransactionHistory() {
                         </span>
                       </div>
                       
-                      {/* Route */}
                       <div className="text-xs text-gray-500 mb-2">
                         {getChainName(tx.source_chain)} → {getChainName(tx.destination_chain)}
                       </div>
                       
-                      {/* Transaction Hashes */}
                       <div className="flex flex-wrap gap-2 text-xs">
                         {tx.bridge_tx_hash && (
                           <a 
@@ -254,7 +248,7 @@ export function TransactionHistory() {
                         })()}
                       </div>
                       
-                      {/* Error Message */}
+                    
                       {tx.error_message && (
                         <div className="mt-2 text-xs text-red-600">
                           Error: {tx.error_message}
@@ -262,7 +256,7 @@ export function TransactionHistory() {
                       )}
                     </div>
                     
-                    {/* Timestamp */}
+                   
                     <div className="text-xs text-gray-400 text-right whitespace-nowrap">
                       <div>{new Date(tx.created_at).toLocaleDateString()}</div>
                       <div>{new Date(tx.created_at).toLocaleTimeString()}</div>

@@ -73,6 +73,17 @@ function VaultsPageContent() {
     bridge?: string
     deposit?: string
   }>({})
+  const [showError, setShowError] = useState(false)
+  const [errorInfo, setErrorInfo] = useState<{
+    message: string
+    txHash?: string
+  } | null>(null)
+  // Lock parameters when execution starts to prevent UI changes affecting the flow
+  const [lockedParams, setLockedParams] = useState<{
+    fromChainId: number
+    fromToken: TokenInfo
+    amount: string
+  } | null>(null)
 
   const { data: tokenBalance, refetch: refetchBalance } = useBalance({
     address,
@@ -100,8 +111,9 @@ function VaultsPageContent() {
   }, [contractNonce])
 
   useEffect(() => {
-    if (chainId) setFromChainId(chainId)
-  }, [chainId])
+    // Don't sync chain when executing - keep the original deposit chain
+    if (chainId && !executing) setFromChainId(chainId)
+  }, [chainId, executing])
 
   useEffect(() => {
     if (selectedVault) {
@@ -110,8 +122,9 @@ function VaultsPageContent() {
   }, [selectedVault])
 
   useEffect(() => {
-    fetchTokens()
-  }, [fromChainId])
+    // Don't refetch tokens during execution
+    if (!executing) fetchTokens()
+  }, [fromChainId, executing])
 
   useEffect(() => {
     if (executing) return
@@ -193,6 +206,11 @@ function VaultsPageContent() {
       setQuote(null)
       return
     }
+    // Clear previous transaction success/error states when fetching new quote
+    setShowSuccess(false)
+    setSuccessTxHashes({})
+    setShowError(false)
+    setErrorInfo(null)
     setLoadingQuote(true)
     try {
       const fromAmount = parseUnits(amount, fromToken.decimals).toString()
@@ -297,7 +315,9 @@ function VaultsPageContent() {
                 return (depositAmount * vaultSharesPerAsset) / BigInt(10 ** 18)
               }
               const estimatedShares = calculateShares(depositAmount)
-              const minReceivedAmount = BigInt(tempQuote.estimate?.toAmountMin || toAmountStr) - ((BigInt(tempQuote.estimate?.toAmountMin || toAmountStr) * BigInt(10)) / BigInt(10000))
+              const toAmountMinStr = tempQuote.estimate?.toAmountMin || toAmountStr
+              const toAmountMinBigInt = BigInt(toAmountMinStr)
+              const minReceivedAmount = toAmountMinBigInt - ((toAmountMinBigInt * BigInt(10)) / BigInt(10000))
               const minReceived = calculateShares(minReceivedAmount)
               
               const totalGasCosts = contractCallQuote.estimate?.gasCosts?.reduce((acc: number, cost: any) => acc + parseFloat(cost.amountUSD || '0'), 0) || 0
@@ -324,6 +344,8 @@ function VaultsPageContent() {
                 quote: contractCallQuote,
                 estimatedShares,
                 estimatedAssets: depositAmount,
+                minAssets: minReceivedAmount,
+                toAmountMin: toAmountMinBigInt,  // Use this for intent signing
                 feeAmount,
                 minReceived,
                 toDecimals: selectedVault.asset.decimals,
@@ -650,7 +672,9 @@ function VaultsPageContent() {
       56: 'bsc',
     }
     const sourceChainKey = chainIdToKey[capturedFromChainId] || fromChain?.name.toLowerCase() || 'unknown'
-    const depositAmount = capturedQuote.estimatedAssets + capturedQuote.feeAmount
+    // IMPORTANT: Use toAmountMin (minimum after slippage) for intent signing
+    // This ensures the signed amount matches what the bridge will actually deliver
+    const depositAmount = capturedQuote.toAmountMin || (capturedQuote.estimatedAssets + capturedQuote.feeAmount)
     const parsedFromAmount = parseUnits(capturedAmount, capturedFromToken.decimals)
 
     const updateTransactionState = async (status: string, currentStep: string, errorMessage?: string, lifiStatusData?: any, bridgeTxHash?: string) => {
@@ -916,9 +940,12 @@ function VaultsPageContent() {
                 clearInterval(pollInterval)
                 const errMsg = status.error?.message || 'Bridge transaction failed'
                 setExecutionStep('idle')
-                setExecutionStatus(`Error: ${errMsg}`)
+                setExecutionStatus(null)
+                setErrorInfo({ message: errMsg, txHash: bridgeHash! })
+                setShowError(true)
                 await updateTransactionState('failed', 'failed', errMsg, status, bridgeHash!)
                 setExecuting(false)
+                setTxHashes({})
               } else {
                 const substatus = status.substatus || status.sending?.substatus || ''
                 setExecutionStatus(`Bridging in progress... ${substatus}`)
@@ -1072,15 +1099,13 @@ function VaultsPageContent() {
               clearInterval(pollInterval)
               const errMsg = status.error?.message || status.receiving?.error?.message || 'Transaction failed'
               setExecutionStep('idle')
-              setExecutionStatus(`Error: ${errMsg}`)
+              setExecutionStatus(null)
+              setErrorInfo({ message: errMsg, txHash: bridgeHash! })
+              setShowError(true)
               await updateTransactionState('failed', 'failed', errMsg, status, bridgeHash!)
               setExecuting(false)
-              
-              setTimeout(() => {
-                setTransactionId(null)
-                setTxHashes({})
-                setExecutionStatus(null)
-              }, 30000)
+              setTransactionId(null)
+              setTxHashes({})
             } else {
               const substatus = status.substatus || status.sending?.substatus || ''
               setExecutionStatus(`Bridging and depositing... ${substatus}`)
@@ -1116,16 +1141,14 @@ function VaultsPageContent() {
       console.error('Execution error:', error)
       const errorMessage = error?.shortMessage || error?.message || 'Transaction failed'
       setExecutionStep('idle')
-      setExecutionStatus(`Error: ${errorMessage}`)
+      setExecutionStatus(null)
+      setErrorInfo({ message: errorMessage, txHash: bridgeHash || txHashes.bridge })
+      setShowError(true)
       setExecuting(false)
-      
+
       await updateTransactionState('failed', 'error', errorMessage, undefined, bridgeHash || undefined)
-      
-      setTimeout(() => {
-        setExecutionStatus(null)
-        setTxHashes({})
-        setTransactionId(null)
-      }, 30000)
+      setTxHashes({})
+      setTransactionId(null)
     }
   }
 
@@ -1860,19 +1883,23 @@ function VaultsPageContent() {
       console.error('Error stack:', error?.stack)
       const errorMessage = error?.shortMessage || error?.message || 'Transaction failed'
       setExecutionStep('idle')
-      setExecutionStatus(`Error: ${errorMessage}`)
-      
+      setExecutionStatus(null)
+
+      // Show persistent error with tx hash
+      setErrorInfo({
+        message: errorMessage,
+        txHash: txHashes.swap || txHashes.bridge || txHashes.deposit,
+      })
+      setShowError(true)
+
       try {
         await updateTransactionState('failed', 'error', errorMessage)
       } catch (err) {
         console.error('Error updating failed transaction state:', err)
       }
-      
-      setTimeout(() => {
-        setExecutionStatus(null)
-        setTxHashes({})
-        setTransactionId(null)
-      }, 10000)
+
+      setTxHashes({})
+      setTransactionId(null)
     } finally {
       setExecuting(false)
     }
@@ -2018,8 +2045,10 @@ function VaultsPageContent() {
       console.error('Direct deposit error:', error)
       const errorMessage = error?.shortMessage || error?.message || 'Transaction failed'
       setExecutionStep('idle')
-      setExecutionStatus(`Error: ${errorMessage}`)
-      
+      setExecutionStatus(null)
+      setErrorInfo({ message: errorMessage, txHash: txHashes.deposit })
+      setShowError(true)
+
       if (txId) {
         try {
           await fetch(`${apiUrl}/api/transaction-states`, {
@@ -2040,12 +2069,9 @@ function VaultsPageContent() {
           console.error('Error updating failed transaction state:', err)
         }
       }
-      
-      setTimeout(() => {
-        setExecutionStatus(null)
-        setTxHashes({})
-        setTransactionId(null)
-      }, 10000)
+
+      setTxHashes({})
+      setTransactionId(null)
     } finally {
       setExecuting(false)
     }
@@ -2519,10 +2545,72 @@ function VaultsPageContent() {
                   </div>
                 )}
 
-                {/* Error Status */}
-                {!executing && !showSuccess && executionStatus && executionStatus.includes('Error') && (
-                  <div className="rounded-lg p-3 bg-red-50 border border-red-200">
-                    <p className="text-sm text-red-800">{executionStatus}</p>
+                {/* Error Status - Persistent until dismissed */}
+                {showError && errorInfo && (
+                  <div className="mt-4 bg-red-50 border-2 border-red-400 rounded-lg p-4 relative">
+                    <button
+                      onClick={() => {
+                        setShowError(false)
+                        setErrorInfo(null)
+                      }}
+                      className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-full transition-colors"
+                      title="Dismiss"
+                    >
+                      ✕
+                    </button>
+
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-2xl">❌</span>
+                      <h3 className="text-lg font-bold text-red-800">Transaction Failed</h3>
+                    </div>
+
+                    <p className="text-red-700 mb-3">{errorInfo.message}</p>
+
+                    {errorInfo.txHash && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-gray-600">Transaction:</span>
+                          <a
+                            href={`https://scan.li.fi/tx/${errorInfo.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline font-mono"
+                          >
+                            {errorInfo.txHash.slice(0, 10)}...{errorInfo.txHash.slice(-6)}
+                          </a>
+                        </div>
+                        <div className="flex gap-2 text-sm">
+                          <a
+                            href={`https://scan.li.fi/tx/${errorInfo.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-purple-600 hover:underline"
+                          >
+                            🔗 Check on LI.FI Explorer
+                          </a>
+                          <span className="text-gray-300">|</span>
+                          <a
+                            href={`${
+                              fromChainId === 8453 ? 'https://basescan.org/tx/' :
+                              fromChainId === 43114 ? 'https://snowtrace.io/tx/' :
+                              fromChainId === 1 ? 'https://etherscan.io/tx/' :
+                              fromChainId === 42161 ? 'https://arbiscan.io/tx/' :
+                              fromChainId === 10 ? 'https://optimistic.etherscan.io/tx/' :
+                              'https://etherscan.io/tx/'
+                            }${errorInfo.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline"
+                          >
+                            🔍 Check on Block Explorer
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-gray-500 mt-3">
+                      Try refreshing the quote or adjusting the amount. If the issue persists, check the transaction details.
+                    </p>
                   </div>
                 )}
 
