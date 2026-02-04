@@ -67,6 +67,12 @@ function VaultsPageContent() {
   }>({})
   const [transactionId, setTransactionId] = useState<string | null>(null)
   const [lifiStatus, setLifiStatus] = useState<any>(null)
+  const [showSuccess, setShowSuccess] = useState(false)
+  const [successTxHashes, setSuccessTxHashes] = useState<{
+    swap?: string
+    bridge?: string
+    deposit?: string
+  }>({})
 
   const { data: tokenBalance, refetch: refetchBalance } = useBalance({
     address,
@@ -524,21 +530,24 @@ function VaultsPageContent() {
 
       setExecutionStep('complete')
       setExecutionStatus('🎉 Deposit completed successfully!')
-      
+
+      // Save tx hashes for success display before clearing
+      setSuccessTxHashes({
+        bridge: bridgeTxHash,
+        deposit: depositHash,
+      })
+      setShowSuccess(true)
+
       setUserNonce(intent.nonce + BigInt(1))
       refetchBalance()
-      
+
       localStorage.removeItem(`pending_deposit_${txId}`)
 
-      setTimeout(() => {
-        setAmount('')
-        setQuote(null)
-        setTransactionId(null)
-        setTxHashes({})
-        setExecutionStatus(null)
-        setExecutionStep('idle')
-      }, 10000)
-
+      // Clear form but keep success message visible
+      setAmount('')
+      setQuote(null)
+      setTransactionId(null)
+      setTxHashes({})
       setExecuting(false)
     } catch (error: any) {
       console.error('Vault deposit error:', error)
@@ -1041,22 +1050,24 @@ function VaultsPageContent() {
             
             if (isDone) {
               clearInterval(pollInterval)
-              
+
               setExecutionStep('complete')
               setExecutionStatus('🎉 Cross-chain deposit completed! Shares issued to your wallet.')
               await updateTransactionState('completed', 'completed', undefined, status, bridgeHash!)
-              
+
+              // Save tx hashes for success display
+              setSuccessTxHashes({
+                bridge: bridgeHash || txHashes.bridge,
+                deposit: txHashes.deposit,
+              })
+              setShowSuccess(true)
+
               setAmount('')
               setQuote(null)
               refetchBalance()
               setExecuting(false)
-              
-              setTimeout(() => {
-                setTransactionId(null)
-                setTxHashes({})
-                setExecutionStatus(null)
-                setExecutionStep('idle')
-              }, 15000)
+              setTransactionId(null)
+              setTxHashes({})
             } else if (isFailed) {
               clearInterval(pollInterval)
               const errMsg = status.error?.message || status.receiving?.error?.message || 'Transaction failed'
@@ -1496,16 +1507,18 @@ function VaultsPageContent() {
           setExecutionStep('complete')
           await updateTransactionState('completed', 'completed', undefined, undefined, depositHash)
 
+          // Save tx hashes for success display
+          setSuccessTxHashes({
+            bridge: txHashes.bridge,
+            deposit: depositHash,
+          })
+          setShowSuccess(true)
+
           setAmount('')
           setQuote(null)
           setExecuting(false)
+          setTxHashes({})
           refetchBalance()
-
-          setTimeout(() => {
-            setExecutionStep('idle')
-            setExecutionStatus(null)
-            setTxHashes({})
-          }, 10000)
           return
         }
 
@@ -1650,18 +1663,20 @@ function VaultsPageContent() {
         await updateTransactionState('completed', 'completed', undefined, swapHash)
         setExecutionStep('complete')
         setExecutionStatus('🎉 Swap and deposit successful!')
+
+        // Save tx hashes for success display
+        setSuccessTxHashes({
+          swap: swapHash,
+        })
+        setShowSuccess(true)
+
         setAmount('')
         setQuote(null)
         setUserNonce(userNonce + BigInt(1))
         refetchBalance()
-        
-        setTimeout(() => {
-          setExecutionStep('idle')
-          setExecutionStatus(null)
-          setTxHashes({})
-          setTransactionId(null)
-          setExecuting(false)
-        }, 10000)
+        setTxHashes({})
+        setTransactionId(null)
+        setExecuting(false)
         return
       } else {
         console.log('Using regular quote: swap then deposit separately')
@@ -1820,18 +1835,20 @@ function VaultsPageContent() {
         await updateTransactionState('completed', 'completed')
         setExecutionStep('complete')
         setExecutionStatus('🎉 Deposit successful!')
+
+        // Save tx hashes for success display
+        setSuccessTxHashes({
+          deposit: depositHash,
+        })
+        setShowSuccess(true)
+
         setAmount('')
         setQuote(null)
         setUserNonce(userNonce + BigInt(1))
         refetchBalance()
-        
-        setTimeout(() => {
-          setExecutionStep('idle')
-          setExecutionStatus(null)
-          setTxHashes({})
-          setTransactionId(null)
-          setExecuting(false)
-        }, 10000)
+        setTxHashes({})
+        setTransactionId(null)
+        setExecuting(false)
       }
     } catch (error: any) {
       console.error('=== SAME CHAIN SWAP DEPOSIT ERROR ===')
@@ -1983,18 +2000,20 @@ function VaultsPageContent() {
       await updateTransactionState('completed', 'completed')
       setExecutionStep('complete')
       setExecutionStatus('🎉 Deposit successful!')
+
+      // Save tx hashes for success display
+      setSuccessTxHashes({
+        deposit: hash,
+      })
+      setShowSuccess(true)
+
       setAmount('')
       setQuote(null)
       setUserNonce(userNonce + BigInt(1))
       refetchBalance()
       setExecuting(false)
-      
-      setTimeout(() => {
-        setExecutionStep('idle')
-        setExecutionStatus(null)
-        setTxHashes({})
-        setTransactionId(null)
-      }, 10000)
+      setTxHashes({})
+      setTransactionId(null)
     } catch (error: any) {
       console.error('Direct deposit error:', error)
       const errorMessage = error?.shortMessage || error?.message || 'Transaction failed'
@@ -2412,15 +2431,98 @@ function VaultsPageContent() {
                   </div>
                 )}
 
-                {!executing && !transactionId && executionStatus && (
-                  <div className={`rounded-lg p-3 ${
-                    executionStatus.includes('Error')
-                      ? 'bg-red-50 border border-red-200'
-                      : 'bg-green-50 border border-green-200'
-                  }`}>
-                    <p className={`text-sm ${
-                      executionStatus.includes('Error') ? 'text-red-800' : 'text-green-800'
-                    }`}>{executionStatus}</p>
+                {/* Success Message - Persistent until dismissed */}
+                {showSuccess && (
+                  <div className="mt-4 bg-green-50 border-2 border-green-400 rounded-lg p-4 relative">
+                    <button
+                      onClick={() => {
+                        setShowSuccess(false)
+                        setSuccessTxHashes({})
+                        setExecutionStatus(null)
+                        setExecutionStep('idle')
+                      }}
+                      className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-full transition-colors"
+                      title="Dismiss"
+                    >
+                      ✕
+                    </button>
+
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-2xl">🎉</span>
+                      <h3 className="text-lg font-bold text-green-800">Transaction Successful!</h3>
+                    </div>
+
+                    <p className="text-green-700 mb-3">Your deposit has been completed. Shares have been issued to your wallet.</p>
+
+                    <div className="space-y-2">
+                      {successTxHashes.swap && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-green-600">✓</span>
+                          <span className="text-gray-600">Swap:</span>
+                          <a
+                            href={`https://scan.li.fi/tx/${successTxHashes.swap}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline font-mono"
+                          >
+                            {successTxHashes.swap.slice(0, 10)}...{successTxHashes.swap.slice(-6)}
+                          </a>
+                        </div>
+                      )}
+                      {successTxHashes.bridge && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-green-600">✓</span>
+                          <span className="text-gray-600">Bridge:</span>
+                          <a
+                            href={`https://scan.li.fi/tx/${successTxHashes.bridge}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline font-mono"
+                          >
+                            {successTxHashes.bridge.slice(0, 10)}...{successTxHashes.bridge.slice(-6)}
+                          </a>
+                        </div>
+                      )}
+                      {successTxHashes.deposit && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-green-600">✓</span>
+                          <span className="text-gray-600">Deposit:</span>
+                          <a
+                            href={`${
+                              selectedVault.chainId === 8453 ? 'https://basescan.org/tx/' :
+                              selectedVault.chainId === 43114 ? 'https://snowtrace.io/tx/' :
+                              selectedVault.chainId === 1 ? 'https://etherscan.io/tx/' :
+                              'https://etherscan.io/tx/'
+                            }${successTxHashes.deposit}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline font-mono"
+                          >
+                            {successTxHashes.deposit.slice(0, 10)}...{successTxHashes.deposit.slice(-6)}
+                          </a>
+                        </div>
+                      )}
+                    </div>
+
+                    {(successTxHashes.swap || successTxHashes.bridge) && (
+                      <div className="mt-3 pt-3 border-t border-green-300">
+                        <a
+                          href={`https://scan.li.fi/tx/${successTxHashes.bridge || successTxHashes.swap}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-purple-600 hover:underline font-medium text-sm"
+                        >
+                          🔗 View full details on LI.FI Explorer ↗
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Error Status */}
+                {!executing && !showSuccess && executionStatus && executionStatus.includes('Error') && (
+                  <div className="rounded-lg p-3 bg-red-50 border border-red-200">
+                    <p className="text-sm text-red-800">{executionStatus}</p>
                   </div>
                 )}
 
