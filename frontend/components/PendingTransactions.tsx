@@ -35,6 +35,33 @@ interface PendingTransactionsProps {
   excludeTransactionId?: string | null // Exclude currently executing transaction
 }
 
+const DISMISSED_TX_KEY = 'dismissed_pending_transactions'
+
+const getDismissedTxIds = (): Set<string> => {
+  try {
+    const stored = localStorage.getItem(DISMISSED_TX_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      // Clean up old entries (older than 24 hours)
+      const now = Date.now()
+      const filtered = Object.entries(parsed)
+        .filter(([_, timestamp]) => now - (timestamp as number) < 24 * 60 * 60 * 1000)
+      localStorage.setItem(DISMISSED_TX_KEY, JSON.stringify(Object.fromEntries(filtered)))
+      return new Set(filtered.map(([id]) => id))
+    }
+  } catch {}
+  return new Set()
+}
+
+const addDismissedTxId = (txId: string) => {
+  try {
+    const stored = localStorage.getItem(DISMISSED_TX_KEY)
+    const parsed = stored ? JSON.parse(stored) : {}
+    parsed[txId] = Date.now()
+    localStorage.setItem(DISMISSED_TX_KEY, JSON.stringify(parsed))
+  } catch {}
+}
+
 const getExplorerUrl = (hash: string, chain: string): string => {
   const explorers: Record<string, string> = {
     'ethereum': 'https://etherscan.io/tx/',
@@ -102,8 +129,14 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
   const { switchChain } = useSwitchChain()
   const [transactions, setTransactions] = useState<PendingTransaction[]>([])
   const [loading, setLoading] = useState(false)
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(false) // Always start collapsed
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null)
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
+
+  // Load dismissed IDs on mount
+  useEffect(() => {
+    setDismissedIds(getDismissedTxIds())
+  }, [])
 
   const fetchPendingTransactions = async () => {
     if (!address) return
@@ -111,16 +144,11 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
     setLoading(true)
     try {
       const apiUrl = process.env.NEXT_PUBLIC_INDEXER_API_URL || 'http://localhost:3001'
-      // Fetch both pending and partial transactions
-      const [pendingRes, partialRes] = await Promise.all([
-        fetch(`${apiUrl}/api/transaction-states?user_address=${address}&status=pending`),
-        fetch(`${apiUrl}/api/transaction-states?user_address=${address}&status=partial`),
-      ])
+      // Only fetch PENDING transactions - partial/completed go to history
+      const response = await fetch(`${apiUrl}/api/transaction-states?user_address=${address}&status=pending`)
 
-      const pendingData = pendingRes.ok ? await pendingRes.json() : { states: [] }
-      const partialData = partialRes.ok ? await partialRes.json() : { states: [] }
-
-      setTransactions([...(pendingData.states || []), ...(partialData.states || [])])
+      const data = response.ok ? await response.json() : { states: [] }
+      setTransactions(data.states || [])
     } catch (error) {
       console.error('Error fetching pending transactions:', error)
     } finally {
@@ -129,6 +157,12 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
   }
 
   const dismissTransaction = async (txId: string) => {
+    // Add to local dismissed list immediately
+    addDismissedTxId(txId)
+    setDismissedIds(prev => new Set([...prev, txId]))
+    setTransactions(prev => prev.filter(tx => tx.transaction_id !== txId))
+
+    // Also update on server
     try {
       const apiUrl = process.env.NEXT_PUBLIC_INDEXER_API_URL || 'http://localhost:3001'
       await fetch(`${apiUrl}/api/transaction-states`, {
@@ -141,7 +175,6 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
           current_step: 'cancelled',
         }),
       })
-      setTransactions(prev => prev.filter(tx => tx.transaction_id !== txId))
     } catch (error) {
       console.error('Error dismissing transaction:', error)
     }
@@ -157,13 +190,13 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
 
       if (response.ok) {
         const data = await response.json()
-        await fetchPendingTransactions()
-
-        // Only auto-dismiss if fully completed, keep partial visible
-        if (data.transactionStatus === 'completed') {
+        // If completed or partial, remove from pending list
+        if (data.transactionStatus === 'completed' || data.transactionStatus === 'partial') {
           setTransactions(prev => prev.filter(tx => tx.transaction_id !== txId))
+        } else {
+          // Refresh the list
+          await fetchPendingTransactions()
         }
-        // Partial status stays visible with warning
       }
     } catch (error) {
       console.error('Error checking LI.FI status:', error)
@@ -181,8 +214,16 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
 
   const ONE_HOUR = 60 * 60 * 1000
   const recentTransactions = transactions.filter(tx => {
+    // Exclude dismissed transactions
+    if (dismissedIds.has(tx.transaction_id)) {
+      return false
+    }
     // Exclude currently executing transaction (user sees inline progress)
     if (excludeTransactionId && tx.transaction_id === excludeTransactionId) {
+      return false
+    }
+    // Only show truly pending transactions (not partial or completed)
+    if (tx.status !== 'pending') {
       return false
     }
     // Filter out old transactions
@@ -220,13 +261,6 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
       {expanded && (
         <div className="border-t border-amber-200 divide-y divide-amber-100">
           {recentTransactions.map((tx) => {
-            let lifiStatus = null
-            try {
-              if (tx.lifi_status) {
-                lifiStatus = JSON.parse(tx.lifi_status)
-              }
-            } catch {}
-
             return (
               <div key={tx.transaction_id} className="p-4 bg-white/80">
                 <div className="flex items-start justify-between gap-4">
@@ -240,14 +274,13 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                         {tx.to_token_symbol}
                       </span>
                     </div>
-                    
+
                     <div className="text-xs text-gray-500 space-y-1">
                       <div>
                         {getChainName(tx.source_chain)} → {getChainName(tx.destination_chain)}
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                          tx.status === 'partial' || tx.current_step === 'bridge_partial' ? 'bg-orange-100 text-orange-700' :
                           tx.current_step === 'bridging' ? 'bg-blue-100 text-blue-700' :
                           tx.current_step === 'bridge_completed' || tx.current_step === 'deposit_pending' ? 'bg-green-100 text-green-700' :
                           tx.current_step === 'depositing' ? 'bg-purple-100 text-purple-700' :
@@ -260,7 +293,7 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                           <span className="text-gray-400 text-xs">{tx.lifi_substatus}</span>
                         )}
                       </div>
-                      
+
                       {tx.bridge_tx_hash && (
                         <a
                           href={`https://scan.li.fi/tx/${tx.bridge_tx_hash}`}
@@ -282,13 +315,13 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                           View on {getChainName(tx.source_chain)} ↗
                         </a>
                       )}
-                      
+
                       <div className="text-gray-400">
                         Started: {new Date(tx.created_at).toLocaleString()}
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="flex flex-col gap-2">
                     {tx.bridge_tx_hash && (
                       <button
@@ -306,7 +339,7 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                         )}
                       </button>
                     )}
-                    
+
                     {tx.current_step === 'deposit_pending' && (
                       <>
                         {chainId !== chainIds[tx.destination_chain] ? (
@@ -326,7 +359,7 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                         )}
                       </>
                     )}
-                    
+
                     <button
                       onClick={() => dismissTransaction(tx.transaction_id)}
                       className="px-3 py-1.5 border border-gray-300 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
@@ -335,29 +368,8 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                     </button>
                   </div>
                 </div>
-                
-                {tx.status === 'partial' && (
-                  <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
-                    <div className="font-semibold mb-1">Partial Fill Warning</div>
-                    <div>{tx.lifi_substatus_message || 'Bridge completed but not all tokens were converted to the destination token.'}</div>
-                    {tx.received_amount && tx.received_token_symbol && (
-                      <div className="mt-1">Received: {tx.received_amount} {tx.received_token_symbol}</div>
-                    )}
-                    {tx.receiving_tx_hash && (
-                      <a
-                        href={getExplorerUrl(tx.receiving_tx_hash, tx.destination_chain)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-orange-600 hover:underline font-medium mt-1 block"
-                      >
-                        View receiving tx on {getChainName(tx.destination_chain)} ↗
-                      </a>
-                    )}
-                    <div className="mt-1 text-orange-600">Funds received on {getChainName(tx.destination_chain)} but may not be deposited in vault.</div>
-                  </div>
-                )}
 
-                {tx.error_message && tx.status !== 'partial' && (
+                {tx.error_message && (
                   <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
                     Error: {tx.error_message}
                   </div>
@@ -367,7 +379,7 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
           })}
         </div>
       )}
-      
+
       <div className="px-4 py-2 bg-yellow-100 border-t border-yellow-300">
         <button
           onClick={fetchPendingTransactions}
@@ -380,4 +392,3 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
     </div>
   )
 }
-

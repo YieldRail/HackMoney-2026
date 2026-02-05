@@ -741,12 +741,12 @@ function VaultsPageContent() {
     const sourceChainKey = chainIdToKey[capturedFromChainId] || fromChain?.name.toLowerCase() || 'unknown'
     // IMPORTANT: Use toAmountMin (minimum after slippage) for intent signing
     // This ensures the signed amount matches what the bridge will actually deliver
-    // For cross-chain, add extra 20% buffer for cumulative slippage across swap + bridge + contract call
+    // For cross-chain, add extra 5% buffer for cumulative slippage across swap + bridge + contract call
     // This is on top of LI.FI's built-in slippage (usually 3%)
-    // Increased from 10% to 20% to handle Stargate V2 slippage + market movement during bridge (~2-5 min)
+    // Note: Any excess tokens beyond intent amount go to user's wallet as fallback
     const isCrossChain = capturedFromChainId !== capturedVault.chainId
     const baseAmount = capturedQuote.toAmountMin || (capturedQuote.estimatedAssets + capturedQuote.feeAmount)
-    const crossChainSlippageBuffer = isCrossChain ? 0.80 : 1.0 // 20% extra buffer for cross-chain
+    const crossChainSlippageBuffer = isCrossChain ? 0.95 : 1.0 // 5% extra buffer for cross-chain
     const depositAmount = isCrossChain
       ? (baseAmount * BigInt(Math.floor(crossChainSlippageBuffer * 100))) / 100n
       : baseAmount
@@ -756,7 +756,7 @@ function VaultsPageContent() {
       depositAmount: depositAmount.toString(),
       isCrossChain,
       crossChainSlippageBuffer,
-      reduction: isCrossChain ? '20%' : '0%',
+      reduction: isCrossChain ? '5%' : '0%',
     })
     const parsedFromAmount = parseUnits(capturedAmount, capturedFromToken.decimals)
 
@@ -943,7 +943,14 @@ function VaultsPageContent() {
             chain: sourceChainConfig,
             transport: http(),
           })
-          
+
+          // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
+          const quoteFromAmount = capturedQuote.quote?.action?.fromAmount
+            ? BigInt(capturedQuote.quote.action.fromAmount)
+            : parsedFromAmount
+          // Add 1% buffer to be safe
+          const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
+
           const allowance = await sourcePublicClient.readContract({
             address: capturedFromToken.address,
             abi: ERC20_ABI,
@@ -951,24 +958,24 @@ function VaultsPageContent() {
             args: [address!, transactionRequest.to as Address],
           }) as bigint
 
-          if (allowance < parsedFromAmount) {
+          if (allowance < approvalAmount) {
             setExecutionStatus('Step 2/3: Approving token spend on source chain...')
             setExecutionStep('approving')
             await updateTransactionState('pending', 'approving')
-            
+
             if (chainId !== capturedFromChainId) {
               await switchChain?.({ chainId: capturedFromChainId })
               await new Promise(resolve => setTimeout(resolve, 3000))
             }
-            
+
             const approveHash = await walletClient.writeContract({
               address: capturedFromToken.address,
               abi: ERC20_ABI,
               functionName: 'approve',
-              args: [transactionRequest.to as Address, parsedFromAmount],
+              args: [transactionRequest.to as Address, approvalAmount],
               chain: chainConfigs[capturedFromChainId],
             })
-            
+
             setTxHashes(prev => ({ ...prev, approve: approveHash }))
             setExecutionStatus('Waiting for approval...')
             await sourcePublicClient.waitForTransactionReceipt({ hash: approveHash })
@@ -1123,6 +1130,21 @@ function VaultsPageContent() {
       
       if (!isNative) {
         console.log('Token is not native, checking allowance on source chain:', capturedFromChainId)
+
+        // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
+        // LI.FI may need slightly more due to swap fees, slippage, etc.
+        const quoteFromAmount = quoteWithCall.action?.fromAmount
+          ? BigInt(quoteWithCall.action.fromAmount)
+          : parsedFromAmount
+        // Add 1% buffer to be safe
+        const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
+
+        console.log('Approval amounts:', {
+          userInput: parsedFromAmount.toString(),
+          quoteNeeds: quoteFromAmount.toString(),
+          approvalWithBuffer: approvalAmount.toString(),
+        })
+
         const allowance = await sourcePublicClient.readContract({
           address: capturedFromToken.address,
           abi: ERC20_ABI,
@@ -1130,19 +1152,19 @@ function VaultsPageContent() {
           args: [address!, quoteWithCall.transactionRequest.to as Address],
         }) as bigint
 
-        if (allowance < parsedFromAmount) {
+        if (allowance < approvalAmount) {
           setExecutionStatus(`Step 2/3: Approving ${capturedFromToken.symbol} on ${fromChain?.name || 'source chain'}...`)
           setExecutionStep('approving')
           await updateTransactionState('pending', 'approving')
-          
+
           const approveHash = await walletClient.writeContract({
             address: capturedFromToken.address,
             abi: ERC20_ABI,
             functionName: 'approve',
-            args: [quoteWithCall.transactionRequest.to as Address, parsedFromAmount],
+            args: [quoteWithCall.transactionRequest.to as Address, approvalAmount],
             chain: chainConfigs[capturedFromChainId],
           })
-          
+
           setTxHashes(prev => ({ ...prev, approve: approveHash }))
           setExecutionStatus('Waiting for approval...')
           await sourcePublicClient.waitForTransactionReceipt({ hash: approveHash })
@@ -1372,6 +1394,13 @@ function VaultsPageContent() {
       }
 
       if (!isNative) {
+        // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
+        const quoteFromAmount = quote.quote?.action?.fromAmount
+          ? BigInt(quote.quote.action.fromAmount)
+          : fromAmount
+        // Add 1% buffer to be safe
+        const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
+
         const allowance = await publicClient?.readContract({
           address: fromToken.address,
           abi: ERC20_ABI,
@@ -1379,14 +1408,14 @@ function VaultsPageContent() {
           args: [address, transactionRequest.to as Address],
         }) as bigint
 
-        if (allowance < fromAmount) {
+        if (allowance < approvalAmount) {
           setExecutionStatus('Approving token spend...')
           setExecutionStep('approving')
           const approveHash = await walletClient.writeContract({
             address: fromToken.address,
             abi: ERC20_ABI,
             functionName: 'approve',
-            args: [transactionRequest.to as Address, fromAmount],
+            args: [transactionRequest.to as Address, approvalAmount],
           })
           await publicClient?.waitForTransactionReceipt({ hash: approveHash })
         }
@@ -1411,34 +1440,35 @@ function VaultsPageContent() {
         deadline,
       }
 
-      if (quote.hasContractCall) {
-        console.log('Using contract call quote: swap + deposit in one transaction')
-        
-        setExecutionStatus('Step 1/2: Please sign the deposit intent...')
-        setExecutionStep('idle')
-        const signature = await signDepositIntent(intent, chainId, depositRouterAddress, walletClient)
-        console.log('Deposit intent signed:', { intent, signature })
+      // Skip contract calls for Lagoon vaults - LI.FI composer doesn't properly support custom syncDeposit
+      // Only use contract calls for ERC4626 vaults (Morpho) which LI.FI has better support for
+      const isERC4626 = selectedVault.type?.startsWith('morpho')
+      const isLagoon = selectedVault.type === 'lagoon'
+      
+      // Sign intent early - needed for both contract call and two-step flows
+      setExecutionStatus('Step 1/2: Please sign the deposit intent...')
+      setExecutionStep('idle')
+      const signature = await signDepositIntent(intent, chainId, depositRouterAddress, walletClient)
+      console.log('Deposit intent signed:', { intent, signature })
+      
+      // Determine function name based on vault type
+      const functionName = selectedVault.hasSettlement
+        ? 'depositWithIntentCrossChainRequest'
+        : (isERC4626 ? 'depositWithIntentCrossChainERC4626' : 'depositWithIntentCrossChain')
+      const localFunctionName = isERC4626 ? 'depositWithIntentERC4626' : 'depositWithIntent'
+      
+      let useContractCall = false
+      let freshQuote: any = null
+      
+      if (quote.hasContractCall && !isLagoon) {
+        console.log('Attempting contract call quote: swap + deposit in one transaction')
         
         setExecutionStatus('Preparing swap + deposit transaction...')
-        const isERC4626 = selectedVault.type?.startsWith('morpho')
-        const functionName = selectedVault.hasSettlement
-          ? 'depositWithIntentCrossChainRequest'
-          : (isERC4626 ? 'depositWithIntentCrossChainERC4626' : 'depositWithIntentCrossChain')
 
         console.log('=== DEPOSIT INTENT DEBUG ===')
         console.log('Vault type:', selectedVault.type)
         console.log('Is ERC4626:', isERC4626)
         console.log('Function name:', functionName)
-        console.log('Intent:', {
-          user: intent.user,
-          vault: intent.vault,
-          asset: intent.asset,
-          amount: intent.amount.toString(),
-          nonce: intent.nonce.toString(),
-          deadline: intent.deadline.toString(),
-        })
-        console.log('Deposit Router:', depositRouterAddress)
-        console.log('Signature:', signature)
 
         const callData = encodeFunctionData({
           abi: DEPOSIT_ROUTER_ABI,
@@ -1446,13 +1476,10 @@ function VaultsPageContent() {
           args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
         })
 
-        console.log('Encoded callData (first 200 chars):', callData.substring(0, 200))
-        console.log('CallData length:', callData.length)
-
         const preferredBridges = quote.usedBridge ? [quote.usedBridge] : undefined
         console.log('📌 Using preferred bridges for fresh quote:', preferredBridges)
 
-        const freshQuote = await getQuoteWithContractCall(
+        freshQuote = await getQuoteWithContractCall(
           fromChainId,
           fromToken.address,
           parseUnits(amount, fromToken.decimals).toString(),
@@ -1465,12 +1492,63 @@ function VaultsPageContent() {
           slippage / 100
         )
         
-        if (!freshQuote || !freshQuote.transactionRequest) {
+        if (freshQuote && freshQuote.transactionRequest) {
+          useContractCall = true
+          console.log('✅ Contract call quote successful - using one-step process')
+        } else {
           console.warn('=== CONTRACT CALL QUOTE FAILED - FALLING BACK TO TWO-STEP PROCESS ===')
-          console.warn('Fresh quote:', freshQuote)
           console.warn('Will bridge first, then user completes deposit on destination chain')
+        }
+      } else if (isLagoon) {
+        console.log('⚠️ Lagoon vault detected - skipping contract calls')
+        console.log('LI.FI composer may not properly support Lagoon vaults with contract calls')
+        console.log('Using two-step process (bridge + deposit) instead')
+      }
+      
+      // Contract call flow (only for non-Lagoon vaults when quote succeeds)
+      if (useContractCall && freshQuote) {
+        console.log('=== FRESH QUOTE RECEIVED ===')
+        console.log('Quote transactionRequest.to:', freshQuote.transactionRequest.to)
+        console.log('Quote transactionRequest.value:', freshQuote.transactionRequest.value)
+        console.log('Quote transactionRequest.data length:', freshQuote.transactionRequest.data?.length)
+        console.log('Quote transactionRequest.gasLimit:', freshQuote.transactionRequest.gasLimit)
+        console.log('Quote tool:', freshQuote.tool)
+        console.log('Quote includedSteps:', freshQuote.includedSteps?.length)
 
-          setExecutionStatus('⚠️ One-step deposit unavailable. Switching to bridge + deposit flow...')
+        console.log('Skipping gas estimation - using LI.FI gas estimate (gas estimation would fail because tokens arrive during execution)')
+
+        setExecutionStatus('Step 2/2: Please confirm the swap + deposit transaction...')
+        setExecutionStep('swapping')
+        await updateTransactionState('pending', 'swapping')
+        
+        const txRequest = freshQuote.transactionRequest
+        const gasParams: any = {}
+
+        const toBigInt = (value: any): bigint | undefined => {
+          if (!value) return undefined
+          if (typeof value === 'bigint') return value
+          if (typeof value === 'string') {
+            return value.startsWith('0x') ? BigInt(value) : BigInt(value)
+          }
+          return BigInt(value)
+        }
+
+        if (txRequest.gasLimit) {
+          const baseGas = toBigInt(txRequest.gasLimit)!
+          gasParams.gas = baseGas + (baseGas * 20n / 100n)
+        }
+
+        const eip1559Chains = [1, 8453, 10, 42161]
+        const isEip1559Chain = eip1559Chains.includes(fromChainId)
+      
+      // Two-step process: Bridge first, then deposit separately
+      // Used for Lagoon vaults and when contract calls fail or aren't available
+      if (!useContractCall) {
+        if (isLagoon) {
+          setExecutionStatus('⚠️ Lagoon vault: Using two-step process (bridge + deposit)')
+        } else {
+          setExecutionStatus('⚠️ One-step deposit unavailable. Using bridge + deposit flow...')
+        }
 
           const regularQuote = await getQuote({
             fromChain: fromChainId,
@@ -1496,6 +1574,14 @@ function VaultsPageContent() {
               transport: http(),
             })
 
+            // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
+            const parsedFromAmount = parseUnits(amount, fromToken.decimals)
+            const quoteFromAmount = regularQuote.action?.fromAmount
+              ? BigInt(regularQuote.action.fromAmount)
+              : parsedFromAmount
+            // Add 1% buffer to be safe
+            const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
+
             const allowance = await sourcePublicClient.readContract({
               address: fromToken.address,
               abi: ERC20_ABI,
@@ -1503,8 +1589,7 @@ function VaultsPageContent() {
               args: [address!, regularQuote.transactionRequest.to as Address],
             }) as bigint
 
-            const parsedFromAmount = parseUnits(amount, fromToken.decimals)
-            if (allowance < parsedFromAmount) {
+            if (allowance < approvalAmount) {
               setExecutionStatus('Step 2/4: Approving token spend...')
               setExecutionStep('approving')
               await updateTransactionState('pending', 'approving')
@@ -1513,7 +1598,7 @@ function VaultsPageContent() {
                 address: fromToken.address,
                 abi: ERC20_ABI,
                 functionName: 'approve',
-                args: [regularQuote.transactionRequest.to as Address, parsedFromAmount],
+                args: [regularQuote.transactionRequest.to as Address, approvalAmount],
                 chain: chainConfigs[fromChainId],
               })
 
@@ -1645,8 +1730,6 @@ function VaultsPageContent() {
           setExecutionStatus('Please confirm the vault deposit...')
           setExecutionStep('depositing')
 
-          const localFunctionName = isERC4626 ? 'depositWithIntentERC4626' : 'depositWithIntent'
-
           const depositHash = await walletClient.writeContract({
             address: depositRouterAddress,
             abi: DEPOSIT_ROUTER_ABI,
@@ -1683,40 +1766,6 @@ function VaultsPageContent() {
           refetchBalance()
           return
         }
-
-        console.log('=== FRESH QUOTE RECEIVED ===')
-        console.log('Quote transactionRequest.to:', freshQuote.transactionRequest.to)
-        console.log('Quote transactionRequest.value:', freshQuote.transactionRequest.value)
-        console.log('Quote transactionRequest.data length:', freshQuote.transactionRequest.data?.length)
-        console.log('Quote transactionRequest.gasLimit:', freshQuote.transactionRequest.gasLimit)
-        console.log('Quote tool:', freshQuote.tool)
-        console.log('Quote includedSteps:', freshQuote.includedSteps?.length)
-
-        console.log('Skipping gas estimation - using LI.FI gas estimate (gas estimation would fail because tokens arrive during execution)')
-
-        setExecutionStatus('Step 2/2: Please confirm the swap + deposit transaction...')
-        setExecutionStep('swapping')
-        await updateTransactionState('pending', 'swapping')
-        
-        const txRequest = freshQuote.transactionRequest
-        const gasParams: any = {}
-
-        const toBigInt = (value: any): bigint | undefined => {
-          if (!value) return undefined
-          if (typeof value === 'bigint') return value
-          if (typeof value === 'string') {
-            return value.startsWith('0x') ? BigInt(value) : BigInt(value)
-          }
-          return BigInt(value)
-        }
-
-        if (txRequest.gasLimit) {
-          const baseGas = toBigInt(txRequest.gasLimit)!
-          gasParams.gas = baseGas + (baseGas * 20n / 100n)
-        }
-
-        const eip1559Chains = [1, 8453, 10, 42161]
-        const isEip1559Chain = eip1559Chains.includes(fromChainId)
 
         if (isEip1559Chain) {
           if (txRequest.maxFeePerGas) {
@@ -1840,177 +1889,6 @@ function VaultsPageContent() {
         setTransactionId(null)
         setExecuting(false)
         return
-      } else {
-        console.log('Using regular quote: swap then deposit separately')
-        
-        try {
-          setExecutionStatus('Validating transaction...')
-          await publicClient?.estimateGas({
-            account: address!,
-            to: transactionRequest.to as Address,
-            data: transactionRequest.data as `0x${string}`,
-            value: txValue,
-          })
-        } catch (gasError: any) {
-          console.error('Gas estimation failed:', gasError)
-          const errorMsg = gasError?.shortMessage || gasError?.message || 'Transaction validation failed'
-          throw new Error(`Transaction will likely fail: ${errorMsg}. Please try refreshing the quote or adjusting the amount.`)
-        }
-        
-        setExecutionStatus('Step 1/3: Please sign the deposit intent...')
-        setExecutionStep('idle')
-        const signature = await signDepositIntent(intent, chainId, depositRouterAddress, walletClient)
-        console.log('Deposit intent signed:', { intent, signature })
-
-        setExecutionStatus('Step 2/3: Please confirm the swap transaction...')
-        setExecutionStep('swapping')
-        await updateTransactionState('pending', 'swapping')
-        
-        const swapHash = await walletClient.sendTransaction({
-          to: transactionRequest.to as Address,
-          data: transactionRequest.data as `0x${string}`,
-          value: txValue,
-          chainId: fromChainId,
-        })
-
-        setTxHashes({ swap: swapHash })
-        setExecutionStatus('Swapping tokens... Waiting for confirmation...')
-        await updateTransactionState('pending', 'swapping')
-        const swapReceipt = await publicClient?.waitForTransactionReceipt({ hash: swapHash })
-        
-        if (swapReceipt && swapReceipt.status === 'reverted') {
-          throw new Error('Swap transaction was reverted. Please check the transaction on explorer for details.')
-        }
-        
-        const vaultAssetAddress = selectedVault.asset.address as Address
-        let actualReceivedAmount: bigint | null = null
-        try {
-          const balanceAfterSwap = await publicClient?.readContract({
-            address: vaultAssetAddress,
-            abi: ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [address!],
-          }) as bigint
-          
-          const balanceBeforeSwap = await publicClient?.readContract({
-            address: vaultAssetAddress,
-            abi: ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [address!],
-            blockNumber: swapReceipt?.blockNumber ? swapReceipt.blockNumber - 1n : undefined,
-          }).catch(() => null) as bigint | null
-          
-          if (balanceBeforeSwap !== null) {
-            actualReceivedAmount = balanceAfterSwap - balanceBeforeSwap
-            console.log('Actual received amount after swap:', {
-              balanceBefore: balanceBeforeSwap.toString(),
-              balanceAfter: balanceAfterSwap.toString(),
-              received: actualReceivedAmount.toString(),
-              estimated: quote.estimatedAssets.toString(),
-            })
-          }
-        } catch (error) {
-          console.warn('Could not check balance after swap (RPC may not support eth_call), using estimated amount:', error)
-        }
-        
-        setExecutionStep('depositing')
-        setExecutionStatus('Step 3/3: Swap complete! Now depositing into vault...')
-        await updateTransactionState('pending', 'depositing')
-
-        const isVaultAssetNative = isNativeToken(vaultAssetAddress)
-
-        if (!isVaultAssetNative) {
-          try {
-            const vaultAssetAllowance = await publicClient?.readContract({
-              address: vaultAssetAddress,
-              abi: ERC20_ABI,
-              functionName: 'allowance',
-              args: [address, depositRouterAddress],
-            }) as bigint
-
-            if (vaultAssetAllowance < depositAmount) {
-              setExecutionStatus('Approving deposit router...')
-              const approveHash = await walletClient.writeContract({
-                address: vaultAssetAddress,
-                abi: ERC20_ABI,
-                functionName: 'approve',
-                args: [depositRouterAddress, depositAmount],
-              })
-              await publicClient?.waitForTransactionReceipt({ hash: approveHash })
-            }
-          } catch (error: any) {
-            console.warn('Could not check allowance (RPC may not support eth_call), attempting approval:', error)
-            setExecutionStatus('Approving deposit router...')
-            try {
-              const approveHash = await walletClient.writeContract({
-                address: vaultAssetAddress,
-                abi: ERC20_ABI,
-                functionName: 'approve',
-                args: [depositRouterAddress, depositAmount],
-              })
-              await publicClient?.waitForTransactionReceipt({ hash: approveHash })
-            } catch (approveError) {
-              console.warn('Approval may have failed or already approved, continuing:', approveError)
-            }
-          }
-        }
-
-        setExecutionStatus('Please confirm the deposit transaction...')
-        const isERC4626 = selectedVault.type?.startsWith('morpho')
-        const functionName = selectedVault.hasSettlement
-          ? 'depositWithIntentRequest'
-          : (isERC4626 ? 'depositWithIntentERC4626' : 'depositWithIntent')
-
-        if (!intent.user || !intent.vault || !intent.asset || !intent.amount || intent.amount === 0n || intent.nonce === undefined || !intent.deadline) {
-          console.error('Invalid intent parameters:', intent)
-          throw new Error('Invalid deposit intent parameters. Please try again.')
-        }
-        
-        if (!signature || signature.length < 130) {
-          console.error('Invalid signature:', signature)
-          throw new Error('Invalid signature. Please try signing again.')
-        }
-        
-        console.log('Executing deposit:', {
-          functionName,
-          depositRouterAddress,
-          intent,
-          signatureLength: signature.length,
-        })
-        
-        const depositHash = await walletClient.writeContract({
-          address: depositRouterAddress,
-          abi: DEPOSIT_ROUTER_ABI,
-          functionName,
-          args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
-        })
-
-        setTxHashes(prev => ({ ...prev, deposit: depositHash }))
-        setExecutionStatus('Deposit submitted! Waiting for confirmation...')
-        await updateTransactionState('pending', 'depositing')
-        const depositReceipt = await publicClient?.waitForTransactionReceipt({ hash: depositHash })
-        
-        if (depositReceipt && depositReceipt.status === 'reverted') {
-          throw new Error('Deposit transaction was reverted. Please check the transaction on explorer for details.')
-        }
-
-        await updateTransactionState('completed', 'completed')
-        setExecutionStep('complete')
-        setExecutionStatus('🎉 Deposit successful!')
-
-        // Save tx hashes for success display
-        setSuccessTxHashes({
-          deposit: depositHash,
-        })
-        setShowSuccess(true)
-
-        setAmount('')
-        setQuote(null)
-        setUserNonce(userNonce + BigInt(1))
-        refetchBalance()
-        setTxHashes({})
-        setTransactionId(null)
-        setExecuting(false)
       }
     } catch (error: any) {
       console.error('=== SAME CHAIN SWAP DEPOSIT ERROR ===')

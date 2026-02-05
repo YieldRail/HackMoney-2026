@@ -467,9 +467,9 @@ export async function getQuoteWithContractCall(
     const isSameChain = fromChainId === toChainId
 
     // For cross-chain, add extra buffer on top of LI.FI's slippage for cumulative slippage
-    // across swap + bridge + contract call. Use 20% buffer to match intent signing.
-    // Increased from 10% to 20% to handle Stargate V2 slippage + market movement during bridge (~2-5 min)
-    const crossChainBuffer = isSameChain ? 1.0 : 0.80 // 20% extra buffer for cross-chain
+    // across swap + bridge + contract call. Use 5% buffer to match intent signing.
+    // Note: Any excess tokens beyond intent amount go to user's wallet as fallback
+    const crossChainBuffer = isSameChain ? 1.0 : 0.95 // 5% extra buffer for cross-chain
     const contractCallAmount = isSameChain
       ? toAmountMinStr
       : (BigInt(toAmountMinStr) * BigInt(Math.floor(crossChainBuffer * 100)) / 100n).toString()
@@ -486,20 +486,20 @@ export async function getQuoteWithContractCall(
     const requestBody: any = {
       fromChain: fromChainId,
       fromToken,
+      fromAmount, // Use exact user input - don't let LI.FI calculate a higher amount
       fromAddress: userAddress,
       toChain: toChainId,
       toToken,
-      toAmount: toAmountStr,
-      toAddress: userAddress, // Fallback address if contract call fails
+      toAddress: userAddress, // Fallback address if contract call fails - tokens go to user
       contractCalls: [{
-        fromAmount: contractCallAmount, // Use minimum amount with buffer for contract call
+        fromAmount: contractCallAmount, // Amount for the contract call (with slippage buffer)
         fromTokenAddress: toToken,
         toTokenAddress: toToken,
         toContractAddress: contractAddress,
         toContractCallData: contractCallData,
-        toContractGasLimit: '800000', // Increased gas for deposit operation
-        toApprovalAddress: contractAddress, // CRITICAL: Approve tokens to deposit router before calling
-        requiresDeposit: true, // CRITICAL: Transfer tokens to contract BEFORE calling (not just approve)
+        toContractGasLimit: '800000',
+        toApprovalAddress: contractAddress,
+        requiresDeposit: true, // Transfer tokens to contract before calling
       }],
       slippage,
       integrator: 'Yieldo',
