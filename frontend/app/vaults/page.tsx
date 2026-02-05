@@ -11,7 +11,7 @@ import { VAULTS_CONFIG, getVaultById, type VaultConfig } from '@/lib/vaults-conf
 import { SUPPORTED_CHAINS, getTokensForChain, getDepositQuote, checkTransferStatus, getBridgeFromQuote, getQuoteWithContractCall, getQuote, type TokenInfo, type DepositQuote } from '@/lib/lifi'
 import { getVaultState } from '@/lib/lagoon'
 import { useVaults } from '@/hooks/useVaults'
-import { fetchMorphoVaultData } from '@/lib/morpho'
+import { fetchMorphoVaultData, fetchMorphoVaultDisplayData, type MorphoVaultDisplayData } from '@/lib/morpho'
 import { signDepositIntent, getIntentHash, type DepositIntent } from '@/lib/eip712'
 import { useWalletClient } from 'wagmi'
 import DEPOSIT_ROUTER_ABI from '@/lib/deposit-router-abi.json'
@@ -21,6 +21,7 @@ import { TransactionLoader } from '@/components/TransactionLoader'
 import { TransactionStatus } from '@/components/TransactionStatus'
 import { PendingTransactions } from '@/components/PendingTransactions'
 import { TransactionHistory } from '@/components/TransactionHistory'
+import { VaultSelect } from '@/components/VaultSelect'
 
 const chainConfigs: Record<number, any> = {
   1: mainnet,
@@ -54,6 +55,8 @@ function VaultsPageContent() {
   const [quote, setQuote] = useState<DepositQuote | null>(null)
   const [loadingQuote, setLoadingQuote] = useState(false)
   const [vaultState, setVaultState] = useState<any>(null)
+  const [morphoVaultData, setMorphoVaultData] = useState<MorphoVaultDisplayData | null>(null)
+  const [loadingMorphoData, setLoadingMorphoData] = useState(false)
   const [vaultSharesPerAsset, setVaultSharesPerAsset] = useState<bigint>(BigInt(10 ** 30))
   const [executing, setExecuting] = useState(false)
   const [executionStatus, setExecutionStatus] = useState<string | null>(null)
@@ -134,6 +137,8 @@ function VaultsPageContent() {
 
   const fetchVaultState = async () => {
     if (!selectedVault) return
+    // Clear Morpho data when switching vaults
+    setMorphoVaultData(null)
     try {
       if (selectedVault.type === 'lagoon') {
         const state = await getVaultState(selectedVault.address as Address, selectedVault.chain, true)
@@ -151,38 +156,70 @@ function VaultsPageContent() {
           }
         }
       } else if (selectedVault.type?.startsWith('morpho')) {
-        const morphoData = await fetchMorphoVaultData(selectedVault.address as Address, selectedVault.chainId)
-        if (morphoData) {
-          const totalAssets = morphoData.totalAssets || 0n
-          const totalSupply = morphoData.totalSupply || 0n
-          
-          setVaultState({
-            totalAssets: totalAssets.toString(),
-            totalSupply: totalSupply.toString(),
-            apr: morphoData.apy ? (morphoData.apy / 100).toString() : '0',
-          })
-          
-          if (totalSupply > 0n && totalAssets > 0n) {
-            const sharesPerAsset = (totalSupply * BigInt(10 ** 18)) / totalAssets
-            console.log('Morpho vault sharesPerAsset calculation:', {
-              totalSupply: totalSupply.toString(),
+        // Fetch rich data from Morpho API
+        setLoadingMorphoData(true)
+        try {
+          const displayData = await fetchMorphoVaultDisplayData(
+            selectedVault.address,
+            selectedVault.chainId,
+            address || undefined
+          )
+
+          if (displayData) {
+            setMorphoVaultData(displayData)
+            const totalAssets = BigInt(displayData.totalAssets || '0')
+            const totalSupply = BigInt(displayData.totalSupply || '0')
+
+            setVaultState({
               totalAssets: totalAssets.toString(),
-              sharesPerAsset: sharesPerAsset.toString(),
-              assetDecimals: selectedVault.asset.decimals,
+              totalSupply: totalSupply.toString(),
+              apr: displayData.apy ? (displayData.apy / 100).toString() : '0',
+              name: displayData.name,
+              tvlUsd: displayData.tvlUsd,
             })
-            setVaultSharesPerAsset(sharesPerAsset)
+
+            if (totalSupply > 0n && totalAssets > 0n) {
+              const sharesPerAsset = (totalSupply * BigInt(10 ** 18)) / totalAssets
+              console.log('Morpho vault sharesPerAsset calculation:', {
+                totalSupply: totalSupply.toString(),
+                totalAssets: totalAssets.toString(),
+                sharesPerAsset: sharesPerAsset.toString(),
+                assetDecimals: selectedVault.asset.decimals,
+              })
+              setVaultSharesPerAsset(sharesPerAsset)
+            } else {
+              console.warn('Morpho vault has no supply or assets, using default 1:1 ratio')
+              setVaultSharesPerAsset(BigInt(10 ** 30))
+            }
           } else {
-            console.warn('Morpho vault has no supply or assets, using default 1:1 ratio')
-            setVaultSharesPerAsset(BigInt(10 ** 30))
+            // Fallback to on-chain data
+            const morphoData = await fetchMorphoVaultData(selectedVault.address as Address, selectedVault.chainId)
+            if (morphoData) {
+              const totalAssets = morphoData.totalAssets || 0n
+              const totalSupply = morphoData.totalSupply || 0n
+
+              setVaultState({
+                totalAssets: totalAssets.toString(),
+                totalSupply: totalSupply.toString(),
+                apr: morphoData.apy ? (morphoData.apy / 100).toString() : '0',
+              })
+
+              if (totalSupply > 0n && totalAssets > 0n) {
+                const sharesPerAsset = (totalSupply * BigInt(10 ** 18)) / totalAssets
+                setVaultSharesPerAsset(sharesPerAsset)
+              }
+            }
           }
-        } else {
-          console.error('Failed to fetch Morpho vault data, using default 1:1 ratio')
+        } catch (error) {
+          console.error('Error fetching Morpho vault data:', error)
           setVaultState({
             totalAssets: '0',
             totalSupply: '0',
             apr: '0',
           })
           setVaultSharesPerAsset(BigInt(10 ** 30))
+        } finally {
+          setLoadingMorphoData(false)
         }
       }
     } catch (error) {
@@ -492,26 +529,56 @@ function VaultsPageContent() {
         } catch (err) {
           console.warn('Failed to use stored intent, creating new one:', err)
           setExecutionStatus('Please sign the deposit intent...')
+          // Fetch fresh nonce to avoid "Invalid nonce" errors
+          let freshNonce = userNonce
+          try {
+            const nonceResult = await publicClient?.readContract({
+              address: depositRouterAddress,
+              abi: DEPOSIT_ROUTER_ABI,
+              functionName: 'getNonce',
+              args: [address],
+            })
+            freshNonce = nonceResult as bigint
+            console.log('Fresh nonce for fallback intent:', freshNonce.toString())
+          } catch (e) {
+            console.warn('Failed to fetch fresh nonce, using cached:', e)
+          }
+
           const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
           intent = {
             user: address!,
             vault: vault.address as Address,
             asset: vault.asset.address as Address,
             amount: depositAmount,
-            nonce: userNonce,
+            nonce: freshNonce,
             deadline,
           }
           signature = await signDepositIntent(intent, vault.chainId, depositRouterAddress, walletClient!)
         }
       } else {
         setExecutionStatus('Please sign the deposit intent...')
+        // Fetch fresh nonce to avoid "Invalid nonce" errors
+        let freshNonce = userNonce
+        try {
+          const nonceResult = await publicClient?.readContract({
+            address: depositRouterAddress,
+            abi: DEPOSIT_ROUTER_ABI,
+            functionName: 'getNonce',
+            args: [address],
+          })
+          freshNonce = nonceResult as bigint
+          console.log('Fresh nonce for resume deposit:', freshNonce.toString())
+        } catch (e) {
+          console.warn('Failed to fetch fresh nonce, using cached:', e)
+        }
+
         const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
         intent = {
           user: address!,
           vault: vault.address as Address,
           asset: vault.asset.address as Address,
           amount: depositAmount,
-          nonce: userNonce,
+          nonce: freshNonce,
           deadline,
         }
         signature = await signDepositIntent(intent, vault.chainId, depositRouterAddress, walletClient!)
@@ -674,7 +741,23 @@ function VaultsPageContent() {
     const sourceChainKey = chainIdToKey[capturedFromChainId] || fromChain?.name.toLowerCase() || 'unknown'
     // IMPORTANT: Use toAmountMin (minimum after slippage) for intent signing
     // This ensures the signed amount matches what the bridge will actually deliver
-    const depositAmount = capturedQuote.toAmountMin || (capturedQuote.estimatedAssets + capturedQuote.feeAmount)
+    // For cross-chain, add extra 20% buffer for cumulative slippage across swap + bridge + contract call
+    // This is on top of LI.FI's built-in slippage (usually 3%)
+    // Increased from 10% to 20% to handle Stargate V2 slippage + market movement during bridge (~2-5 min)
+    const isCrossChain = capturedFromChainId !== capturedVault.chainId
+    const baseAmount = capturedQuote.toAmountMin || (capturedQuote.estimatedAssets + capturedQuote.feeAmount)
+    const crossChainSlippageBuffer = isCrossChain ? 0.80 : 1.0 // 20% extra buffer for cross-chain
+    const depositAmount = isCrossChain
+      ? (baseAmount * BigInt(Math.floor(crossChainSlippageBuffer * 100))) / 100n
+      : baseAmount
+
+    console.log('Intent amount calculation:', {
+      baseAmount: baseAmount.toString(),
+      depositAmount: depositAmount.toString(),
+      isCrossChain,
+      crossChainSlippageBuffer,
+      reduction: isCrossChain ? '20%' : '0%',
+    })
     const parsedFromAmount = parseUnits(capturedAmount, capturedFromToken.decimals)
 
     const updateTransactionState = async (status: string, currentStep: string, errorMessage?: string, lifiStatusData?: any, bridgeTxHash?: string) => {
@@ -714,14 +797,36 @@ function VaultsPageContent() {
       await updateTransactionState('pending', 'initiated')
 
       setExecutionStatus('Step 1/3: Signing deposit intent...')
-      
+
+      // CRITICAL: Fetch fresh nonce from destination chain before signing
+      // This prevents "Invalid nonce" errors when the cached nonce is stale
+      const destChainConfig = chainConfigs[capturedVault.chainId]
+      const destPublicClient = createPublicClient({
+        chain: destChainConfig,
+        transport: http(),
+      })
+
+      let freshNonce = userNonce
+      try {
+        const nonceResult = await destPublicClient.readContract({
+          address: depositRouterAddress,
+          abi: DEPOSIT_ROUTER_ABI,
+          functionName: 'getNonce',
+          args: [address],
+        })
+        freshNonce = nonceResult as bigint
+        console.log('Fresh nonce from destination chain:', freshNonce.toString(), '(cached was:', userNonce.toString(), ')')
+      } catch (nonceError) {
+        console.warn('Failed to fetch fresh nonce, using cached value:', nonceError)
+      }
+
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 7200)
       const intent: DepositIntent = {
         user: address!,
         vault: capturedVault.address as Address,
         asset: capturedVault.asset.address as Address,
         amount: depositAmount,
-        nonce: userNonce,
+        nonce: freshNonce,
         deadline,
       }
 
@@ -785,6 +890,9 @@ function VaultsPageContent() {
       
       const toTokenForContractCall = capturedVault.asset.address as Address
       
+      // Use higher slippage (5%) for cross-chain contract calls due to multi-hop complexity
+      const crossChainSlippage = 0.05
+
       let quoteWithCall = await getQuoteWithContractCall(
         capturedFromChainId,
         capturedFromToken.address,
@@ -795,13 +903,13 @@ function VaultsPageContent() {
         depositRouterAddress,
         callData,
         preferredBridges,
-        0.03
+        crossChainSlippage
       )
 
       if (!quoteWithCall || !quoteWithCall.transactionRequest) {
         console.warn(`Bridge ${bridgeFromRegularQuote} does not support contract calls, trying other bridges...`)
         setExecutionStatus('Step 2/3: Trying alternative bridges that support automatic deposit...')
-        
+
         quoteWithCall = await getQuoteWithContractCall(
           capturedFromChainId,
           capturedFromToken.address,
@@ -812,7 +920,7 @@ function VaultsPageContent() {
           depositRouterAddress,
           callData,
           undefined,
-          0.03
+          crossChainSlippage
         )
       }
 
@@ -928,11 +1036,22 @@ function VaultsPageContent() {
               const statusValue = status.status || status.sending?.status || 'PENDING'
               const isDone = statusValue === 'DONE' || statusValue === 'COMPLETED'
               const isFailed = statusValue === 'FAILED' || statusValue === 'NOT_FOUND'
-              
-              if (isDone) {
+              const isPartial = isDone && status.substatus === 'PARTIAL'
+
+              if (isPartial) {
+                clearInterval(pollInterval)
+                const partialMsg = status.substatusMessage || 'Partial fill: tokens received but may not be deposited to vault'
+                await updateTransactionState('partial', 'bridge_partial', partialMsg, status, bridgeHash!)
+
+                setExecutionStep('idle')
+                setExecutionStatus(`⚠️ Partial fill: ${partialMsg}`)
+                setErrorInfo({ message: partialMsg, txHash: bridgeHash! })
+                setShowError(true)
+                setExecuting(false)
+              } else if (isDone) {
                 clearInterval(pollInterval)
                 await updateTransactionState('pending', 'bridge_completed', 'Bridge completed - please complete deposit on destination chain', status, bridgeHash!)
-                
+
                 setExecutionStep('depositing')
                 setExecutionStatus(`✅ Bridge completed! Switch to ${capturedVault.chain === 'avalanche' ? 'Avalanche' : capturedVault.chain} to complete deposit.`)
                 setExecuting(false)
@@ -1053,7 +1172,8 @@ function VaultsPageContent() {
       setExecutionStatus('Confirmed! Bridging and depositing into vault...')
       await updateTransactionState('pending', 'depositing', undefined, { txHash: bridgeHash, status: 'CONFIRMED' }, bridgeHash)
 
-      setUserNonce(userNonce + BigInt(1))
+      // Use intent.nonce since we may have fetched fresh nonce
+      setUserNonce(intent.nonce + BigInt(1))
 
       const bridge = getBridgeFromQuote(quoteWithCall)
       console.log('Using bridge for status check:', bridge)
@@ -1074,8 +1194,22 @@ function VaultsPageContent() {
             const statusValue = status.status || status.sending?.status || 'PENDING'
             const isDone = statusValue === 'DONE' || statusValue === 'COMPLETED'
             const isFailed = statusValue === 'FAILED' || statusValue === 'NOT_FOUND'
-            
-            if (isDone) {
+            const isPartial = isDone && status.substatus === 'PARTIAL'
+
+            if (isPartial) {
+              clearInterval(pollInterval)
+              const partialMsg = status.substatusMessage || 'Partial fill: tokens received on destination chain but not deposited to vault'
+
+              setExecutionStep('idle')
+              setExecutionStatus(`⚠️ Partial fill: ${partialMsg}`)
+              await updateTransactionState('partial', 'bridge_partial', partialMsg, status, bridgeHash!)
+
+              setErrorInfo({ message: `Partial fill: ${partialMsg}. Check your wallet on the destination chain.`, txHash: bridgeHash! })
+              setShowError(true)
+              setExecuting(false)
+              setTransactionId(null)
+              setTxHashes({})
+            } else if (isDone) {
               clearInterval(pollInterval)
 
               setExecutionStep('complete')
@@ -1452,6 +1586,11 @@ function VaultsPageContent() {
               console.log('Bridge status:', status)
 
               if (status?.status === 'DONE') {
+                if (status.substatus === 'PARTIAL') {
+                  const partialMsg = status.substatusMessage || 'Partial fill: tokens received but deposit may have failed'
+                  await updateTransactionState('partial', 'bridge_partial', partialMsg, status, bridgeHash)
+                  throw new Error(`Partial fill: ${partialMsg}. Check your wallet on the destination chain.`)
+                }
                 bridgeComplete = true
                 setExecutionStatus('Bridge complete! Now completing vault deposit...')
               } else if (status?.status === 'FAILED') {
@@ -2118,97 +2257,149 @@ function VaultsPageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <nav className="border-b border-gray-200 px-6 py-4">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <Link href="/" className="text-2xl font-bold text-black">Yieldo</Link>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Modern Nav */}
+      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex justify-between items-center">
+          <Link href="/" className="text-2xl font-black bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
+            Yieldo
+          </Link>
           <ConnectButton />
         </div>
       </nav>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white border-2 border-black rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Vault Details</h2>
-              <select
-                value={selectedVaultId}
-                onChange={(e) => setSelectedVaultId(e.target.value)}
-                className="w-full border-2 border-black rounded-lg px-4 py-3 mb-4 font-medium focus:outline-none focus:ring-2 focus:ring-black"
-              >
-                {allVaults.map((vault) => (
-                  <option key={vault.id} value={vault.id}>
-                    {vault.name} {vault.type === 'lagoon' ? '(Lagoon)' : vault.type === 'morpho-v1' ? '(Morpho V1)' : vault.type === 'morpho-v2' ? '(Morpho V2)' : ''}
-                  </option>
-                ))}
-              </select>
-
-              <div className="mb-4">
-                {selectedVault.type === 'lagoon' && (
-                  <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
-                    Lagoon Vault
-                  </span>
-                )}
-                {selectedVault.type === 'morpho-v1' && (
-                  <span className="inline-block px-3 py-1 bg-purple-100 text-purple-800 text-xs font-semibold rounded-full">
-                    Morpho V1
-                  </span>
-                )}
-                {selectedVault.type === 'morpho-v2' && (
-                  <span className="inline-block px-3 py-1 bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-full">
-                    Morpho V2
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">TVL</p>
-                  <p className="text-xl font-bold">{formatTVL(vaultState?.totalAssets)}</p>
-                </div>
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">APY</p>
-                  <p className="text-xl font-bold text-green-600">
-                    {vaultState?.apr ? `${(parseFloat(vaultState.apr) * 100).toFixed(2)}%` : '-'}
-                  </p>
-                </div>
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Chain</p>
-                  <p className="text-xl font-bold capitalize">{selectedVault.chain}</p>
-                </div>
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Asset</p>
-                  <p className="text-xl font-bold">{selectedVault.asset.symbol}</p>
-                </div>
-              </div>
-
-              <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                <p className="text-sm text-gray-500">Vault Address</p>
-                <a 
-                  href={
-                    selectedVault.chain === 'ethereum' 
-                      ? `https://etherscan.io/address/${selectedVault.address}`
-                      : selectedVault.chain === 'base'
-                      ? `https://basescan.org/address/${selectedVault.address}`
-                      : `https://snowtrace.io/address/${selectedVault.address}`
-                  }
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline text-sm font-mono break-all"
-                >
-                  {selectedVault.address}
-                </a>
-              </div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        {/* Compact Vault Header Card */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
+          <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+            {/* Vault Selector - Modern Dropdown */}
+            <div className="flex-shrink-0 lg:w-80">
+              <VaultSelect
+                vaults={allVaults}
+                selectedVaultId={selectedVaultId}
+                onChange={setSelectedVaultId}
+                morphoData={morphoVaultData}
+                loadingMorphoData={loadingMorphoData}
+              />
             </div>
 
+            {/* Vault Stats - Horizontal */}
+            <div className="flex-1 flex flex-wrap items-center gap-4 lg:gap-6 lg:pt-3">
+              {/* Quick Stats */}
+              {selectedVault.type?.startsWith('morpho') && morphoVaultData ? (
+                <>
+                  <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                    <span className="text-xs text-gray-500">TVL</span>
+                    <span className="font-bold text-sm">${Number(morphoVaultData.tvlUsd || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
+                    <span className="text-xs text-green-600">APY</span>
+                    <span className="font-bold text-sm text-green-700">{(morphoVaultData.netApy || 0).toFixed(2)}%</span>
+                  </div>
+                </>
+              ) : loadingMorphoData && selectedVault.type?.startsWith('morpho') ? (
+                <div className="flex gap-3">
+                  {[1, 2].map(i => <div key={i} className="h-9 w-24 bg-gray-100 rounded-lg animate-pulse" />)}
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                    <span className="text-xs text-gray-500">TVL</span>
+                    <span className="font-bold text-sm">{formatTVL(vaultState?.totalAssets)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
+                    <span className="text-xs text-green-600">APY</span>
+                    <span className="font-bold text-sm text-green-700">
+                      {vaultState?.apr ? `${(parseFloat(vaultState.apr) * 100).toFixed(2)}%` : '-'}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {/* Vault Address Link */}
+              <a
+                href={
+                  selectedVault.chain === 'ethereum' ? `https://etherscan.io/address/${selectedVault.address}` :
+                  selectedVault.chain === 'base' ? `https://basescan.org/address/${selectedVault.address}` :
+                  `https://snowtrace.io/address/${selectedVault.address}`
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-gray-400 hover:text-blue-600 font-mono transition-colors"
+              >
+                {selectedVault.address.slice(0, 6)}...{selectedVault.address.slice(-4)}
+              </a>
+            </div>
+          </div>
+
+          {/* Morpho Extended Info - Collapsible */}
+          {selectedVault.type?.startsWith('morpho') && morphoVaultData && (
+            <details className="mt-4 pt-4 border-t border-gray-100">
+              <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors flex items-center gap-2">
+                <span className="text-purple-600">{morphoVaultData.name}</span>
+                <span className="text-gray-400">-</span>
+                <span>View Detailed Stats</span>
+              </summary>
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-3 text-center">
+                  <p className="text-xs text-green-600 mb-1">24h APY</p>
+                  <p className="text-lg font-bold text-green-700">{(morphoVaultData.dailyApy || 0).toFixed(2)}%</p>
+                </div>
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-3 text-center">
+                  <p className="text-xs text-green-600 mb-1">7d APY</p>
+                  <p className="text-lg font-bold text-green-700">{(morphoVaultData.weeklyApy || 0).toFixed(2)}%</p>
+                </div>
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-3 text-center">
+                  <p className="text-xs text-green-600 mb-1">30d APY</p>
+                  <p className="text-lg font-bold text-green-700">{(morphoVaultData.monthlyApy || 0).toFixed(2)}%</p>
+                </div>
+                <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-3 text-center">
+                  <p className="text-xs text-gray-500 mb-1">Fee</p>
+                  <p className="text-lg font-bold text-gray-700">{(morphoVaultData.performanceFee || 0).toFixed(1)}%</p>
+                </div>
+              </div>
+              {morphoVaultData.userShares && BigInt(morphoVaultData.userShares) > 0n && (
+                <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
+                  <h4 className="text-xs font-semibold text-blue-700 mb-2">Your Position</h4>
+                  <div className="flex gap-6">
+                    <div>
+                      <p className="text-xs text-blue-500">Shares</p>
+                      <p className="font-bold text-blue-900">{(Number(morphoVaultData.userShares) / 10 ** 18).toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-blue-500">Value</p>
+                      <p className="font-bold text-blue-900">
+                        {morphoVaultData.userAssetsUsd ? `$${morphoVaultData.userAssetsUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` :
+                          `${(Number(morphoVaultData.userAssets || 0) / 10 ** morphoVaultData.assetDecimals).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${morphoVaultData.assetSymbol}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </details>
+          )}
+        </div>
+
+        {/* Main Content Grid - 2 columns */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left Column - Deposit Form */}
+          <div className="space-y-6">
             {!isConnected ? (
-              <div className="bg-white border-2 border-black rounded-lg p-8 text-center">
-                <p className="text-gray-600 mb-4">Connect your wallet to deposit</p>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 text-center">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                </div>
+                <p className="text-gray-600 mb-4">Connect your wallet to start depositing</p>
                 <ConnectButton />
               </div>
             ) : (
-              <div className="bg-white border-2 border-black rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-4">Deposit</h2>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
+                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <span className="w-8 h-8 bg-gradient-to-br from-gray-900 to-gray-700 rounded-lg flex items-center justify-center text-white text-sm">$</span>
+                  Deposit
+                </h2>
 
                 <div className="mb-4">
                   <PendingTransactions
@@ -2319,13 +2510,13 @@ function VaultsPageContent() {
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
                         placeholder="0.00"
-                        className="flex-1 border-2 border-gray-300 rounded-lg px-4 py-3 text-lg focus:border-black focus:outline-none"
+                        className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-lg focus:bg-white focus:border-gray-900 focus:ring-1 focus:ring-gray-900 focus:outline-none transition-all"
                       />
                       <button
                         onClick={() => {
                           if (tokenBalance) setAmount(formatUnits(tokenBalance.value, tokenBalance.decimals))
                         }}
-                        className="px-4 py-3 border-2 border-black bg-white hover:bg-black hover:text-white rounded-lg font-medium transition-colors"
+                        className="px-4 py-3 bg-gray-900 text-white hover:bg-gray-800 rounded-xl font-medium transition-colors"
                       >
                         Max
                       </button>
@@ -2336,11 +2527,11 @@ function VaultsPageContent() {
                   </div>
 
                   {needsChainSwitch && (
-                    <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-4">
-                      <p className="text-yellow-800 mb-2">Please switch to {fromChain?.name} network</p>
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                      <p className="text-amber-800 mb-2 text-sm">Please switch to {fromChain?.name} network</p>
                       <button
                         onClick={() => switchChain({ chainId: fromChainId })}
-                        className="px-4 py-2 bg-yellow-400 hover:bg-yellow-500 text-black rounded-lg font-medium"
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
                       >
                         Switch Network
                       </button>
@@ -2349,27 +2540,41 @@ function VaultsPageContent() {
                 </div>
               </div>
             )}
+
+            {/* Transaction History */}
+            {address && (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                <TransactionHistory />
+              </div>
+            )}
           </div>
 
+          {/* Right Column - Quote & Actions */}
           <div className="space-y-6">
+            {/* Quote Card */}
             {loadingQuote && (
-              <div className="bg-white border-2 border-black rounded-lg p-6 text-center">
-                <p className="text-gray-500">Fetching quote...</p>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="w-5 h-5 border-2 border-gray-900 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-gray-600">Fetching best route...</span>
+                </div>
               </div>
             )}
 
             {quote && !loadingQuote && (
-              <div className="bg-white border-2 border-black rounded-lg p-4 sticky top-6">
-                {/* Compact Header */}
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-bold">Quote</h3>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 lg:sticky lg:top-20">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-lg">Quote Summary</h3>
                   {quote?.hasContractCall && (
-                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✨ Auto-deposit</span>
+                    <span className="text-xs bg-gradient-to-r from-green-100 to-emerald-100 text-green-700 px-3 py-1 rounded-full font-medium">
+                      Auto-deposit
+                    </span>
                   )}
                 </div>
 
-                {/* Pay/Receive - Compact */}
-                <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                {/* Pay/Receive Card */}
+                <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-4 mb-4">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-gray-500">Pay</span>
                     <span className="font-semibold">{amount} {fromToken?.symbol}</span>
@@ -2383,59 +2588,54 @@ function VaultsPageContent() {
                   </div>
                 </div>
 
-                {/* Key Details - Grid */}
-                <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                  <div className="bg-gray-50 rounded p-2">
-                    <span className="text-gray-500 block">Est. {selectedVault.asset.symbol}</span>
-                    <span className="font-medium">{parseFloat(formatUnits(quote.estimatedAssets, selectedVault.asset.decimals)).toFixed(2)}</span>
+                {/* Key Details - Horizontal */}
+                <div className="flex flex-wrap gap-3 text-xs mb-4">
+                  <div className="flex items-center gap-1.5 bg-gray-100 rounded-lg px-3 py-1.5">
+                    <span className="text-gray-500">Est.</span>
+                    <span className="font-semibold">{parseFloat(formatUnits(quote.estimatedAssets, selectedVault.asset.decimals)).toFixed(2)} {selectedVault.asset.symbol}</span>
                   </div>
-                  <div className="bg-gray-50 rounded p-2">
-                    <span className="text-gray-500 block">Fee (0.1%)</span>
-                    <span className="font-medium">{parseFloat(formatUnits(quote.feeAmount, selectedVault.asset.decimals)).toFixed(4)}</span>
+                  <div className="flex items-center gap-1.5 bg-gray-100 rounded-lg px-3 py-1.5">
+                    <span className="text-gray-500">Fee</span>
+                    <span className="font-semibold">{parseFloat(formatUnits(quote.feeAmount, selectedVault.asset.decimals)).toFixed(4)}</span>
                   </div>
                   {quote.estimatedTime && (
-                    <div className="bg-gray-50 rounded p-2">
-                      <span className="text-gray-500 block">Est. Time</span>
-                      <span className="font-medium text-blue-600">{formatTime(quote.estimatedTime)}</span>
+                    <div className="flex items-center gap-1.5 bg-blue-50 rounded-lg px-3 py-1.5">
+                      <span className="text-blue-500">Time</span>
+                      <span className="font-semibold text-blue-700">{formatTime(quote.estimatedTime)}</span>
                     </div>
                   )}
                   {quote.gasCosts !== undefined && quote.gasCosts > 0 && (
-                    <div className="bg-gray-50 rounded p-2">
-                      <span className="text-gray-500 block">Gas</span>
-                      <span className="font-medium">${quote.gasCosts.toFixed(2)}</span>
+                    <div className="flex items-center gap-1.5 bg-gray-100 rounded-lg px-3 py-1.5">
+                      <span className="text-gray-500">Gas</span>
+                      <span className="font-semibold">${quote.gasCosts.toFixed(2)}</span>
                     </div>
                   )}
                 </div>
 
-                {/* Route Info - Collapsible */}
+                {/* Route Info - Inline */}
                 {quote.stepDetails && quote.stepDetails.length > 0 && (
-                  <details className="text-xs mb-3">
-                    <summary className="cursor-pointer text-gray-600 hover:text-gray-800 font-medium">
-                      Route: {quote.stepDetails.map(s => s.tool).join(' → ')}
-                    </summary>
-                    <div className="mt-2 pl-2 border-l-2 border-gray-200 space-y-1">
-                      {quote.stepDetails.map((step, idx) => (
-                        <div key={idx} className="flex items-center gap-2 text-gray-600">
-                          {step.logoURI && <img src={step.logoURI} alt="" className="w-3 h-3 rounded" />}
-                          <span>{step.tool}</span>
-                          <span className="text-gray-400">({step.type})</span>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-4 flex-wrap">
+                    <span className="font-medium">Route:</span>
+                    {quote.stepDetails.map((step, idx) => (
+                      <span key={idx} className="flex items-center gap-1">
+                        {step.logoURI && <img src={step.logoURI} alt="" className="w-4 h-4 rounded" />}
+                        <span className="font-medium text-gray-700">{step.tool}</span>
+                        {idx < quote.stepDetails!.length - 1 && <span className="text-gray-400 mx-1">→</span>}
+                      </span>
+                    ))}
+                  </div>
                 )}
 
-                {/* Price Impact Warning */}
+                {/* Warnings */}
                 {quote.priceImpact !== undefined && quote.priceImpact > 1 && (
-                  <div className={`text-xs p-2 rounded mb-3 ${quote.priceImpact > 2 ? 'bg-red-50 text-red-700' : 'bg-yellow-50 text-yellow-700'}`}>
+                  <div className={`text-xs p-3 rounded-xl mb-3 ${quote.priceImpact > 2 ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
                     ⚠️ Price impact: {quote.priceImpact.toFixed(2)}%
                   </div>
                 )}
 
-                {/* MetaMask Notice - Compact */}
                 {quote?.hasContractCall && (
-                  <div className="text-xs p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
-                    <strong>Note:</strong> MetaMask may show "likely to fail" - this is normal. The transaction will succeed.
+                  <div className="text-xs p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 mb-3">
+                    <strong>Note:</strong> MetaMask may show "likely to fail" - this is normal.
                   </div>
                 )}
 
@@ -2617,36 +2817,41 @@ function VaultsPageContent() {
                 <button
                   onClick={handleExecute}
                   disabled={!canExecute}
-                  className="w-full mt-4 py-4 bg-black text-white rounded-lg font-bold text-lg hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                  className="w-full mt-4 py-4 bg-gradient-to-r from-gray-900 to-gray-800 text-white rounded-xl font-bold text-lg hover:from-gray-800 hover:to-gray-700 disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl disabled:shadow-none"
                 >
-                  {executing ? 'Processing...' : needsChainSwitch ? 'Switch Network First' : 'Deposit'}
+                  {executing ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Processing...
+                    </span>
+                  ) : needsChainSwitch ? 'Switch Network First' : 'Deposit'}
                 </button>
               </div>
             )}
 
+            {/* No Quote Available */}
             {!quote && !loadingQuote && amount && fromToken && !needsChainSwitch && (
-              <div className="bg-white border-2 border-black rounded-lg p-6 text-center">
-                <p className="text-gray-500">Unable to get quote. Try a different amount or token.</p>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center">
+                <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-gray-500 text-sm">Unable to get quote. Try a different amount or token.</p>
               </div>
             )}
 
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <h4 className="font-medium mb-2">How it works</h4>
-              <ol className="text-sm text-gray-600 space-y-2">
-                <li>1. Select your source chain and token</li>
-                <li>2. Enter the amount you want to deposit</li>
-                <li>3. Sign the deposit intent (message signature)</li>
-                <li>4. Confirm the bridge transaction</li>
-                <li>5. LI.FI swaps, bridges & deposits automatically!</li>
-              </ol>
-              <p className="text-xs text-gray-500 mt-3">
-                ✨ You only sign on your current chain - no need to switch networks!
-              </p>
-            </div>
-
-          
-            {address && (
-              <TransactionHistory />
+            {/* Empty State */}
+            {!quote && !loadingQuote && (!amount || !fromToken) && (
+              <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-2xl border border-gray-200 p-8 text-center">
+                <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </div>
+                <h3 className="font-semibold text-gray-700 mb-1">Ready to Deposit</h3>
+                <p className="text-sm text-gray-500">Select a token and enter an amount to see your quote</p>
+              </div>
             )}
           </div>
         </div>
@@ -2658,10 +2863,10 @@ function VaultsPageContent() {
 export default function VaultsPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <div className="w-10 h-10 border-2 border-gray-900 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Loading Yieldo...</p>
         </div>
       </div>
     }>

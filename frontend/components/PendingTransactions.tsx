@@ -6,7 +6,7 @@ import { useAccount, useChainId, useSwitchChain } from 'wagmi'
 
 interface PendingTransaction {
   transaction_id: string
-  status: 'pending' | 'completed' | 'failed'
+  status: 'pending' | 'completed' | 'failed' | 'partial'
   current_step: string
   source_chain: string
   destination_chain: string
@@ -17,8 +17,13 @@ interface PendingTransaction {
   swap_tx_hash?: string
   bridge_tx_hash?: string
   deposit_tx_hash?: string
+  receiving_tx_hash?: string
+  received_amount?: string
+  received_token_symbol?: string
   error_message?: string
   lifi_status?: string
+  lifi_substatus?: string
+  lifi_substatus_message?: string
   vault_id?: string
   vault_address?: string
   created_at: string
@@ -70,9 +75,11 @@ const getStepLabel = (step: string): string => {
     'swapping': '🔄 Swapping',
     'bridging': '🌉 Bridging & Depositing',
     'bridge_completed': '✅ Bridge Done',
+    'bridge_partial': '⚠️ Partial Fill',
     'deposit_pending': '⏳ Awaiting Deposit',
     'depositing': '💰 Depositing',
     'completed': '✅ Completed',
+    'partial': '⚠️ Partial Fill',
     'error': '❌ Error',
     'failed': '❌ Failed',
     'cancelled': '🚫 Cancelled',
@@ -100,16 +107,20 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
 
   const fetchPendingTransactions = async () => {
     if (!address) return
-    
+
     setLoading(true)
     try {
       const apiUrl = process.env.NEXT_PUBLIC_INDEXER_API_URL || 'http://localhost:3001'
-      const response = await fetch(`${apiUrl}/api/transaction-states?user_address=${address}&status=pending`)
-      
-      if (response.ok) {
-        const data = await response.json()
-        setTransactions(data.states || [])
-      }
+      // Fetch both pending and partial transactions
+      const [pendingRes, partialRes] = await Promise.all([
+        fetch(`${apiUrl}/api/transaction-states?user_address=${address}&status=pending`),
+        fetch(`${apiUrl}/api/transaction-states?user_address=${address}&status=partial`),
+      ])
+
+      const pendingData = pendingRes.ok ? await pendingRes.json() : { states: [] }
+      const partialData = partialRes.ok ? await partialRes.json() : { states: [] }
+
+      setTransactions([...(pendingData.states || []), ...(partialData.states || [])])
     } catch (error) {
       console.error('Error fetching pending transactions:', error)
     } finally {
@@ -143,14 +154,16 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
       const response = await fetch(`${apiUrl}/api/transaction-states/${txId}/check-lifi`, {
         method: 'POST',
       })
-      
+
       if (response.ok) {
         const data = await response.json()
         await fetchPendingTransactions()
-        
+
+        // Only auto-dismiss if fully completed, keep partial visible
         if (data.transactionStatus === 'completed') {
           setTransactions(prev => prev.filter(tx => tx.transaction_id !== txId))
         }
+        // Partial status stays visible with warning
       }
     } catch (error) {
       console.error('Error checking LI.FI status:', error)
@@ -181,21 +194,23 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
   if (!isConnected || recentTransactions.length === 0) return null
 
   return (
-    <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg overflow-hidden">
+    <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-xl overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between hover:bg-yellow-100 transition-colors"
+        className="w-full px-4 py-3 flex items-center justify-between hover:bg-amber-100/50 transition-colors"
       >
-        <div className="flex items-center gap-2">
-          <span className="text-xl">⏳</span>
-          <span className="font-semibold text-yellow-800">
-            {recentTransactions.length} Pending Transaction{recentTransactions.length > 1 ? 's' : ''}
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
+            <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+          <span className="font-semibold text-amber-800">
+            {recentTransactions.length} Pending
           </span>
         </div>
-        <svg 
-          className={`w-5 h-5 text-yellow-600 transition-transform ${expanded ? 'rotate-180' : ''}`}
-          fill="none" 
-          stroke="currentColor" 
+        <svg
+          className={`w-5 h-5 text-amber-500 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
           viewBox="0 0 24 24"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -203,7 +218,7 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
       </button>
 
       {expanded && (
-        <div className="border-t border-yellow-300 divide-y divide-yellow-200">
+        <div className="border-t border-amber-200 divide-y divide-amber-100">
           {recentTransactions.map((tx) => {
             let lifiStatus = null
             try {
@@ -213,7 +228,7 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
             } catch {}
 
             return (
-              <div key={tx.transaction_id} className="p-4 bg-white">
+              <div key={tx.transaction_id} className="p-4 bg-white/80">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
@@ -232,6 +247,7 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                          tx.status === 'partial' || tx.current_step === 'bridge_partial' ? 'bg-orange-100 text-orange-700' :
                           tx.current_step === 'bridging' ? 'bg-blue-100 text-blue-700' :
                           tx.current_step === 'bridge_completed' || tx.current_step === 'deposit_pending' ? 'bg-green-100 text-green-700' :
                           tx.current_step === 'depositing' ? 'bg-purple-100 text-purple-700' :
@@ -240,8 +256,8 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                         }`}>
                           {getStepLabel(tx.current_step)}
                         </span>
-                        {lifiStatus?.substatus && (
-                          <span className="text-gray-400 text-xs">{lifiStatus.substatus}</span>
+                        {tx.lifi_substatus && (
+                          <span className="text-gray-400 text-xs">{tx.lifi_substatus}</span>
                         )}
                       </div>
                       
@@ -320,7 +336,28 @@ export function PendingTransactions({ onResume, excludeTransactionId }: PendingT
                   </div>
                 </div>
                 
-                {tx.error_message && (
+                {tx.status === 'partial' && (
+                  <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                    <div className="font-semibold mb-1">Partial Fill Warning</div>
+                    <div>{tx.lifi_substatus_message || 'Bridge completed but not all tokens were converted to the destination token.'}</div>
+                    {tx.received_amount && tx.received_token_symbol && (
+                      <div className="mt-1">Received: {tx.received_amount} {tx.received_token_symbol}</div>
+                    )}
+                    {tx.receiving_tx_hash && (
+                      <a
+                        href={getExplorerUrl(tx.receiving_tx_hash, tx.destination_chain)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-orange-600 hover:underline font-medium mt-1 block"
+                      >
+                        View receiving tx on {getChainName(tx.destination_chain)} ↗
+                      </a>
+                    )}
+                    <div className="mt-1 text-orange-600">Funds received on {getChainName(tx.destination_chain)} but may not be deposited in vault.</div>
+                  </div>
+                )}
+
+                {tx.error_message && tx.status !== 'partial' && (
                   <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
                     Error: {tx.error_message}
                   </div>

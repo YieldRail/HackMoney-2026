@@ -76,6 +76,7 @@ let colPendingYieldoWithdrawals;
 let colVaultRatings;
 let colVaultRatingHistory;
 let colCrossChainDeposits;
+let colTransactionStates;
 
 const clients = {};
 const rpcIndices = {};
@@ -1643,7 +1644,7 @@ app.get('/api/transaction-states/:transactionId', async (req, res) => {
   try {
     const { transactionId } = req.params;
     const state = await colTransactionStates.findOne({ transaction_id: transactionId });
-    
+
     if (!state) {
       return res.status(404).json({ error: 'Transaction state not found' });
     }
@@ -1651,6 +1652,111 @@ app.get('/api/transaction-states/:transactionId', async (req, res) => {
     return res.json({ success: true, state });
   } catch (error) {
     console.error('Error fetching transaction state:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Check LI.FI status for a transaction
+app.post('/api/transaction-states/:transactionId/check-lifi', async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const state = await colTransactionStates.findOne({ transaction_id: transactionId });
+
+    if (!state) {
+      return res.status(404).json({ error: 'Transaction state not found' });
+    }
+
+    // Get the tx hash to check (prefer bridge_tx_hash, fall back to swap_tx_hash)
+    const txHash = state.bridge_tx_hash || state.swap_tx_hash;
+    if (!txHash) {
+      return res.json({
+        success: true,
+        message: 'No bridge/swap tx hash to check',
+        transactionStatus: state.status,
+        state
+      });
+    }
+
+    // Query LI.FI status API
+    const lifiResponse = await fetch(`https://li.quest/v1/status?txHash=${txHash}`);
+
+    if (!lifiResponse.ok) {
+      return res.json({
+        success: false,
+        message: 'Failed to fetch LI.FI status',
+        transactionStatus: state.status,
+        state
+      });
+    }
+
+    const lifiData = await lifiResponse.json();
+    console.log(`LI.FI status for ${transactionId}: ${lifiData.status} (substatus: ${lifiData.substatus})`);
+
+    // Determine new status based on LI.FI response
+    let newStatus = state.status;
+    let newCurrentStep = state.current_step;
+    let errorMessage = state.error_message;
+
+    if (lifiData.status === 'DONE') {
+      if (lifiData.substatus === 'PARTIAL') {
+        // Partial fill - bridge completed but not all tokens converted
+        newStatus = 'partial';
+        newCurrentStep = 'bridge_partial';
+        errorMessage = lifiData.substatusMessage || 'Partial fill: some tokens were not converted to destination token';
+      } else {
+        // Full success
+        newStatus = 'completed';
+        newCurrentStep = 'completed';
+      }
+    } else if (lifiData.status === 'FAILED') {
+      newStatus = 'failed';
+      newCurrentStep = 'bridge_failed';
+      errorMessage = lifiData.substatusMessage || 'Bridge transaction failed';
+    } else if (lifiData.status === 'PENDING' || lifiData.status === 'NOT_FOUND') {
+      // Still pending, don't update
+    }
+
+    // Update transaction state with LI.FI info
+    const updateData = {
+      lifi_status: lifiData.status,
+      lifi_substatus: lifiData.substatus || null,
+      lifi_substatus_message: lifiData.substatusMessage || null,
+      updated_at: new Date(),
+    };
+
+    if (newStatus !== state.status) {
+      updateData.status = newStatus;
+      updateData.current_step = newCurrentStep;
+      if (errorMessage) {
+        updateData.error_message = errorMessage;
+      }
+    }
+
+    // Store receiving tx info if available
+    if (lifiData.receiving?.txHash) {
+      updateData.receiving_tx_hash = lifiData.receiving.txHash;
+      updateData.received_amount = lifiData.receiving.amount;
+      updateData.received_token = lifiData.receiving.token?.address;
+      updateData.received_token_symbol = lifiData.receiving.token?.symbol;
+    }
+
+    await colTransactionStates.updateOne(
+      { transaction_id: transactionId },
+      { $set: updateData }
+    );
+
+    const updatedState = await colTransactionStates.findOne({ transaction_id: transactionId });
+
+    return res.json({
+      success: true,
+      transactionStatus: newStatus,
+      lifiStatus: lifiData.status,
+      lifiSubstatus: lifiData.substatus,
+      lifiSubstatusMessage: lifiData.substatusMessage,
+      state: updatedState,
+    });
+  } catch (error) {
+    console.error('Error checking LI.FI status:', error);
     res.status(500).json({ error: error.message });
   }
 });

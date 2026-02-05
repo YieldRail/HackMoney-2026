@@ -3,6 +3,50 @@ import { base } from 'viem/chains'
 import ERC4626_ABI from './erc4626-abi.json'
 import ERC20_ABI from './erc20-abi.json'
 
+const MORPHO_API_URL = 'https://api.morpho.org/graphql'
+
+// Cache configuration
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+const VAULT_CACHE_KEY = 'morpho_vault_cache'
+const POSITION_CACHE_KEY = 'morpho_position_cache'
+
+interface CacheEntry<T> {
+  data: T
+  timestamp: number
+}
+
+function getFromCache<T>(key: string, subKey: string): T | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const cache = localStorage.getItem(key)
+    if (!cache) return null
+    const parsed = JSON.parse(cache) as Record<string, CacheEntry<T>>
+    const entry = parsed[subKey]
+    if (!entry) return null
+    if (Date.now() - entry.timestamp > CACHE_DURATION) {
+      // Cache expired, remove it
+      delete parsed[subKey]
+      localStorage.setItem(key, JSON.stringify(parsed))
+      return null
+    }
+    return entry.data
+  } catch {
+    return null
+  }
+}
+
+function setToCache<T>(key: string, subKey: string, data: T): void {
+  if (typeof window === 'undefined') return
+  try {
+    const cache = localStorage.getItem(key)
+    const parsed = cache ? JSON.parse(cache) : {}
+    parsed[subKey] = { data, timestamp: Date.now() }
+    localStorage.setItem(key, JSON.stringify(parsed))
+  } catch {
+    // Ignore cache errors
+  }
+}
+
 export interface MorphoVault {
   id: string
   address: Address
@@ -16,7 +60,48 @@ export interface MorphoVault {
   version: 'v1' | 'v2'
   apy?: number
   tvl?: string
+  tvlUsd?: string
   curator?: Address
+  curatorName?: string
+  performanceFee?: number
+  dailyApy?: number
+  weeklyApy?: number
+  monthlyApy?: number
+}
+
+export interface MorphoApiVaultData {
+  address: string
+  name: string
+  symbol: string
+  totalAssetsUsd: number
+  totalAssets: string
+  totalSupply: string
+  avgApy: number
+  avgNetApy: number
+  dailyApy: number
+  weeklyApy: number
+  monthlyApy: number
+  performanceFee: number
+  curator?: {
+    name: string
+    address: string
+  }
+  asset: {
+    address: string
+    symbol: string
+    decimals: number
+  }
+}
+
+export interface MorphoUserPosition {
+  shares: string
+  assets: string
+  assetsUsd: number
+  vault: {
+    address: string
+    name: string
+    symbol: string
+  }
 }
 
 function getRpcUrl(chainId: number): string {
@@ -24,6 +109,358 @@ function getRpcUrl(chainId: number): string {
     return process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://base.meowrpc.com'
   }
   return 'https://base.meowrpc.com'
+}
+
+// Morpho GraphQL API queries
+async function morphoGraphQL<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  const response = await fetch(MORPHO_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Morpho API error: ${response.status}`)
+  }
+
+  const result = await response.json()
+  if (result.errors) {
+    throw new Error(`GraphQL error: ${result.errors[0]?.message}`)
+  }
+  return result.data
+}
+
+// Fetch vault data from Morpho API (tries V1 first, then V2)
+export async function fetchMorphoVaultFromApi(vaultAddress: string, chainId: number): Promise<MorphoApiVaultData | null> {
+  // Check cache first
+  const cacheKey = `${vaultAddress.toLowerCase()}_${chainId}`
+  const cached = getFromCache<MorphoApiVaultData>(VAULT_CACHE_KEY, cacheKey)
+  if (cached) {
+    console.log('Using cached Morpho vault data')
+    return cached
+  }
+
+  // Try V1 vault query first (most Morpho vaults are V1)
+  const v1Query = `
+    query GetVaultV1($address: String!, $chainId: Int) {
+      vaultByAddress(address: $address, chainId: $chainId) {
+        address
+        name
+        symbol
+        state {
+          totalAssets
+          totalAssetsUsd
+          totalSupply
+          apy
+          netApy
+          fee
+        }
+        asset {
+          address
+          symbol
+          decimals
+        }
+      }
+    }
+  `
+
+  try {
+    const v1Data = await morphoGraphQL<{ vaultByAddress: any }>(v1Query, {
+      address: vaultAddress.toLowerCase(),
+      chainId,
+    })
+
+    if (v1Data.vaultByAddress) {
+      const vault = v1Data.vaultByAddress
+      const state = vault.state || {}
+      const result: MorphoApiVaultData = {
+        address: vault.address,
+        name: vault.name,
+        symbol: vault.symbol,
+        totalAssetsUsd: state.totalAssetsUsd || 0,
+        totalAssets: state.totalAssets || '0',
+        totalSupply: state.totalSupply || '0',
+        avgApy: state.apy || 0,
+        avgNetApy: state.netApy || 0,
+        dailyApy: state.apy || 0,
+        weeklyApy: state.apy || 0,
+        monthlyApy: state.apy || 0,
+        performanceFee: state.fee || 0,
+        curator: undefined,
+        asset: {
+          address: vault.asset?.address || '',
+          symbol: vault.asset?.symbol || 'UNKNOWN',
+          decimals: vault.asset?.decimals || 18,
+        },
+      }
+      // Cache successful result
+      setToCache(VAULT_CACHE_KEY, cacheKey, result)
+      return result
+    }
+  } catch (error: any) {
+    // Check if it's a NOT_FOUND error - if so, try V2
+    const isNotFound = error?.message?.includes('NOT_FOUND') || error?.message?.includes('cannot find')
+    if (!isNotFound) {
+      console.error('V1 vault query error:', error)
+    } else {
+      console.log('V1 vault not found, trying V2')
+    }
+  }
+
+  // Try V2 vault query as fallback
+  const v2Query = `
+    query GetVaultV2($address: String!, $chainId: Int!) {
+      vaultV2ByAddress(address: $address, chainId: $chainId) {
+        address
+        name
+        symbol
+        totalAssets
+        totalAssetsUsd
+        totalSupply
+        avgApy
+        avgNetApy
+        performanceFee
+        asset {
+          address
+          symbol
+          decimals
+        }
+      }
+    }
+  `
+
+  try {
+    const v2Data = await morphoGraphQL<{ vaultV2ByAddress: any }>(v2Query, {
+      address: vaultAddress.toLowerCase(),
+      chainId,
+    })
+
+    if (v2Data.vaultV2ByAddress) {
+      const vault = v2Data.vaultV2ByAddress
+      const result: MorphoApiVaultData = {
+        address: vault.address,
+        name: vault.name,
+        symbol: vault.symbol,
+        totalAssetsUsd: vault.totalAssetsUsd || 0,
+        totalAssets: vault.totalAssets || '0',
+        totalSupply: vault.totalSupply || '0',
+        avgApy: vault.avgApy || 0,
+        avgNetApy: vault.avgNetApy || 0,
+        dailyApy: vault.avgApy || 0,
+        weeklyApy: vault.avgApy || 0,
+        monthlyApy: vault.avgApy || 0,
+        performanceFee: vault.performanceFee || 0,
+        curator: undefined,
+        asset: {
+          address: vault.asset?.address || '',
+          symbol: vault.asset?.symbol || 'UNKNOWN',
+          decimals: vault.asset?.decimals || 18,
+        },
+      }
+      // Cache successful result
+      setToCache(VAULT_CACHE_KEY, cacheKey, result)
+      return result
+    }
+  } catch (error) {
+    console.error('V2 vault query also failed:', error)
+  }
+
+  return null
+}
+
+// Fetch user's position in a Morpho vault (tries V1 and V2)
+export async function fetchMorphoUserPosition(
+  userAddress: string,
+  vaultAddress: string,
+  chainId: number
+): Promise<MorphoUserPosition | null> {
+  // Try V1 position query first
+  const v1Query = `
+    query GetUserVaultPosition($userAddress: String!, $vaultAddress: String!, $chainId: Int) {
+      vaultPosition(userAddress: $userAddress, vaultAddress: $vaultAddress, chainId: $chainId) {
+        state {
+          shares
+          assets
+          assetsUsd
+        }
+        vault {
+          address
+          name
+          symbol
+        }
+      }
+    }
+  `
+
+  try {
+    const v1Data = await morphoGraphQL<{ vaultPosition: any }>(v1Query, {
+      userAddress: userAddress.toLowerCase(),
+      vaultAddress: vaultAddress.toLowerCase(),
+      chainId,
+    })
+
+    if (v1Data.vaultPosition?.state) {
+      const position = v1Data.vaultPosition
+      const state = position.state
+      return {
+        shares: state.shares || '0',
+        assets: state.assets || '0',
+        assetsUsd: state.assetsUsd || 0,
+        vault: {
+          address: position.vault?.address || vaultAddress,
+          name: position.vault?.name || 'Morpho Vault',
+          symbol: position.vault?.symbol || 'mvUSDC',
+        },
+      }
+    }
+  } catch (error: any) {
+    const isNotFound = error?.message?.includes('NOT_FOUND') || error?.message?.includes('cannot find')
+    if (!isNotFound) {
+      console.error('V1 position query error:', error)
+    }
+  }
+
+  // Try V2 position query as fallback
+  const v2Query = `
+    query GetUserVaultPositionV2($userAddress: String!, $vaultAddress: String!, $chainId: Int!) {
+      vaultV2PositionByAddress(userAddress: $userAddress, vaultAddress: $vaultAddress, chainId: $chainId) {
+        shares
+        assets
+        assetsUsd
+        vault {
+          address
+          name
+          symbol
+        }
+      }
+    }
+  `
+
+  try {
+    const v2Data = await morphoGraphQL<{ vaultV2PositionByAddress: any }>(v2Query, {
+      userAddress: userAddress.toLowerCase(),
+      vaultAddress: vaultAddress.toLowerCase(),
+      chainId,
+    })
+
+    if (v2Data.vaultV2PositionByAddress) {
+      const position = v2Data.vaultV2PositionByAddress
+      return {
+        shares: position.shares || '0',
+        assets: position.assets || '0',
+        assetsUsd: position.assetsUsd || 0,
+        vault: {
+          address: position.vault?.address || vaultAddress,
+          name: position.vault?.name || 'Morpho Vault',
+          symbol: position.vault?.symbol || 'mvUSDC',
+        },
+      }
+    }
+  } catch (error) {
+    // Position doesn't exist - this is expected for users who haven't deposited
+    console.log('User position not found')
+  }
+
+  return null
+}
+
+// Fetch all vault data needed for display
+export interface MorphoVaultDisplayData {
+  name: string
+  symbol: string
+  tvl: string
+  tvlUsd: string
+  apy: number
+  netApy: number
+  dailyApy: number
+  weeklyApy: number
+  monthlyApy: number
+  performanceFee: number
+  curatorName?: string
+  assetSymbol: string
+  assetDecimals: number
+  totalAssets: string
+  totalSupply: string
+  sharePrice?: string
+  userShares?: string
+  userAssets?: string
+  userAssetsUsd?: number
+}
+
+export async function fetchMorphoVaultDisplayData(
+  vaultAddress: string,
+  chainId: number,
+  userAddress?: string
+): Promise<MorphoVaultDisplayData | null> {
+  try {
+    // Fetch vault data from API
+    const apiData = await fetchMorphoVaultFromApi(vaultAddress, chainId)
+
+    if (!apiData) {
+      // Fallback to on-chain data if API fails
+      const onChainData = await fetchMorphoVaultData(vaultAddress as Address, chainId)
+      if (!onChainData) return null
+
+      return {
+        name: 'Morpho Vault',
+        symbol: 'mvUSDC',
+        tvl: onChainData.tvl || '0',
+        tvlUsd: '0',
+        apy: 0,
+        netApy: 0,
+        dailyApy: 0,
+        weeklyApy: 0,
+        monthlyApy: 0,
+        performanceFee: 0,
+        assetSymbol: 'USDC',
+        assetDecimals: 6,
+        totalAssets: onChainData.totalAssets?.toString() || '0',
+        totalSupply: onChainData.totalSupply?.toString() || '0',
+        sharePrice: onChainData.sharePrice?.toString(),
+      }
+    }
+
+    const displayData: MorphoVaultDisplayData = {
+      name: apiData.name,
+      symbol: apiData.symbol,
+      tvl: apiData.totalAssets,
+      tvlUsd: apiData.totalAssetsUsd.toFixed(2),
+      apy: apiData.avgApy * 100, // Convert to percentage
+      netApy: apiData.avgNetApy * 100,
+      dailyApy: apiData.dailyApy * 100,
+      weeklyApy: apiData.weeklyApy * 100,
+      monthlyApy: apiData.monthlyApy * 100,
+      performanceFee: apiData.performanceFee * 100,
+      curatorName: apiData.curator?.name,
+      assetSymbol: apiData.asset.symbol,
+      assetDecimals: apiData.asset.decimals,
+      totalAssets: apiData.totalAssets,
+      totalSupply: apiData.totalSupply,
+    }
+
+    // Calculate share price
+    if (BigInt(apiData.totalSupply) > 0n && BigInt(apiData.totalAssets) > 0n) {
+      const sharePrice = (BigInt(apiData.totalAssets) * BigInt(10 ** 18)) / BigInt(apiData.totalSupply)
+      displayData.sharePrice = sharePrice.toString()
+    }
+
+    // Fetch user position if address provided
+    if (userAddress) {
+      const userPosition = await fetchMorphoUserPosition(userAddress, vaultAddress, chainId)
+      if (userPosition) {
+        displayData.userShares = userPosition.shares
+        displayData.userAssets = userPosition.assets
+        displayData.userAssetsUsd = userPosition.assetsUsd
+      }
+    }
+
+    return displayData
+  } catch (error) {
+    console.error('Error fetching Morpho vault display data:', error)
+    return null
+  }
 }
 
 export async function fetchMorphoVaults(chainId: number): Promise<MorphoVault[]> {

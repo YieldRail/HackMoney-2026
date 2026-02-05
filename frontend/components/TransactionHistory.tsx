@@ -6,7 +6,7 @@ import { useAccount } from 'wagmi'
 
 interface Transaction {
   transaction_id: string
-  status: 'pending' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'completed' | 'failed' | 'cancelled' | 'partial'
   current_step: string
   source_chain: string
   destination_chain: string
@@ -17,8 +17,13 @@ interface Transaction {
   swap_tx_hash?: string
   bridge_tx_hash?: string
   deposit_tx_hash?: string
+  receiving_tx_hash?: string
+  received_amount?: string
+  received_token_symbol?: string
   error_message?: string
   lifi_status?: string
+  lifi_substatus?: string
+  lifi_substatus_message?: string
   vault_id?: string
   vault_address?: string
   created_at: string
@@ -61,6 +66,7 @@ const formatAmount = (amount: string, symbol: string): string => {
 const getStatusIcon = (status: string): string => {
   switch (status) {
     case 'completed': return '✅'
+    case 'partial': return '⚠️'
     case 'failed': return '❌'
     case 'cancelled': return '🚫'
     default: return '⏳'
@@ -69,10 +75,11 @@ const getStatusIcon = (status: string): string => {
 
 const getStatusColor = (status: string): string => {
   switch (status) {
-    case 'completed': return 'bg-green-100 text-green-800 border-green-300'
-    case 'failed': return 'bg-red-100 text-red-800 border-red-300'
-    case 'cancelled': return 'bg-gray-100 text-gray-800 border-gray-300'
-    default: return 'bg-yellow-100 text-yellow-800 border-yellow-300'
+    case 'completed': return 'bg-green-100 text-green-700'
+    case 'partial': return 'bg-amber-100 text-amber-700'
+    case 'failed': return 'bg-red-100 text-red-700'
+    case 'cancelled': return 'bg-gray-100 text-gray-600'
+    default: return 'bg-yellow-100 text-yellow-700'
   }
 }
 
@@ -81,7 +88,7 @@ export function TransactionHistory() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'completed' | 'failed'>('all')
+  const [filter, setFilter] = useState<'all' | 'completed' | 'partial' | 'failed'>('all')
 
   const fetchTransactions = async () => {
     if (!address) return
@@ -113,42 +120,51 @@ export function TransactionHistory() {
 
   const filteredTransactions = transactions.filter(tx => {
     if (filter === 'all') return tx.status !== 'pending'
+    if (filter === 'partial') return tx.status === 'partial'
     return tx.status === filter
   })
 
   const completedCount = transactions.filter(t => t.status === 'completed').length
+  const partialCount = transactions.filter(t => t.status === 'partial').length
   const failedCount = transactions.filter(t => t.status === 'failed').length
 
   if (transactions.length === 0) return null
 
   return (
-    <div className="bg-white border-2 border-gray-200 rounded-lg overflow-hidden shadow-sm">
+    <div className="overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+        className="w-full px-5 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
       >
-        <div className="flex items-center gap-2">
-          <span className="text-xl">📜</span>
-          <span className="font-semibold text-gray-800">
-            Transaction History
-          </span>
-          <div className="flex gap-1 ml-2">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-gradient-to-br from-gray-100 to-slate-100 rounded-lg flex items-center justify-center">
+            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          </div>
+          <span className="font-semibold text-gray-800">History</span>
+          <div className="flex gap-1.5">
             {completedCount > 0 && (
-              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                {completedCount} completed
+              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+                {completedCount}
+              </span>
+            )}
+            {partialCount > 0 && (
+              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">
+                {partialCount}
               </span>
             )}
             {failedCount > 0 && (
-              <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
-                {failedCount} failed
+              <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">
+                {failedCount}
               </span>
             )}
           </div>
         </div>
-        <svg 
-          className={`w-5 h-5 text-gray-600 transition-transform ${expanded ? 'rotate-180' : ''}`}
-          fill="none" 
-          stroke="currentColor" 
+        <svg
+          className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
           viewBox="0 0 24 24"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -157,12 +173,12 @@ export function TransactionHistory() {
 
       {expanded && (
         <>
-          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex gap-2">
-            {['all', 'completed', 'failed'].map((f) => (
+          <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex gap-2">
+            {['all', 'completed', 'partial', 'failed'].map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f as any)}
-                className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                   filter === f 
                     ? 'bg-gray-800 text-white' 
                     : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-100'
@@ -180,30 +196,30 @@ export function TransactionHistory() {
             </button>
           </div>
 
-          <div className="border-t border-gray-200 divide-y divide-gray-100 max-h-96 overflow-y-auto">
+          <div className="border-t border-gray-100 divide-y divide-gray-50 max-h-80 overflow-y-auto">
             {filteredTransactions.length === 0 ? (
-              <div className="p-4 text-center text-gray-500 text-sm">
+              <div className="p-6 text-center text-gray-400 text-sm">
                 No {filter === 'all' ? '' : filter} transactions found
               </div>
             ) : (
               filteredTransactions.map((tx) => (
-                <div key={tx.transaction_id} className="p-4 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-start justify-between gap-4">
+                <div key={tx.transaction_id} className="px-5 py-3 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(tx.status)}`}>
-                          {getStatusIcon(tx.status)} {tx.status.toUpperCase()}
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${getStatusColor(tx.status)}`}>
+                          {getStatusIcon(tx.status)} {tx.status}
                         </span>
-                        <span className="text-sm font-medium text-gray-900">
+                        <span className="text-sm font-semibold text-gray-900">
                           {formatAmount(tx.from_amount, tx.from_token_symbol)} {tx.from_token_symbol}
                         </span>
-                        <span className="text-gray-400">→</span>
-                        <span className="text-sm font-medium text-gray-900">
+                        <span className="text-gray-300">→</span>
+                        <span className="text-sm font-semibold text-gray-900">
                           {tx.to_token_symbol}
                         </span>
                       </div>
-                      
-                      <div className="text-xs text-gray-500 mb-2">
+
+                      <div className="text-xs text-gray-400 mb-2">
                         {getChainName(tx.source_chain)} → {getChainName(tx.destination_chain)}
                       </div>
                       
@@ -249,7 +265,24 @@ export function TransactionHistory() {
                       </div>
                       
                     
-                      {tx.error_message && (
+                      {tx.status === 'partial' && (
+                        <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                          <div className="font-medium">Partial Fill</div>
+                          <div>{tx.lifi_substatus_message || 'Bridge completed but tokens not deposited to vault'}</div>
+                          {tx.receiving_tx_hash && (
+                            <a
+                              href={getExplorerUrl(tx.receiving_tx_hash, tx.destination_chain)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-orange-600 hover:underline mt-1 block"
+                            >
+                              Receiving TX on {getChainName(tx.destination_chain)} ↗
+                            </a>
+                          )}
+                        </div>
+                      )}
+
+                      {tx.error_message && tx.status !== 'partial' && (
                         <div className="mt-2 text-xs text-red-600">
                           Error: {tx.error_message}
                         </div>
