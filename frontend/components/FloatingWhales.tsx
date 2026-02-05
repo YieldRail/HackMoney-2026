@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { formatUnits } from 'viem'
-import { useEnsName, useEnsAvatar, useEnsText } from 'wagmi'
+import { useEnsAvatar, useEnsText } from 'wagmi'
 import { mainnet } from 'viem/chains'
 import { normalize } from 'viem/ens'
+import { batchResolveEnsNames } from '@/lib/ens-batch'
+import type { Address } from 'viem'
 
 interface WhalePosition {
   address: string
@@ -24,29 +26,6 @@ interface FloatingWhalesProps {
   className?: string
 }
 
-// Component to check if an address has ENS (doesn't render anything visible)
-function ENSChecker({
-  address,
-  onResult,
-}: {
-  address: string
-  onResult: (address: string, ensName: string | null) => void
-}) {
-  const { data: ensName, isLoading } = useEnsName({
-    address: address as `0x${string}`,
-    chainId: mainnet.id,
-  })
-
-  useEffect(() => {
-    if (!isLoading) {
-      onResult(address, ensName || null)
-    }
-  }, [address, ensName, isLoading, onResult])
-
-  return null
-}
-
-// Individual floating whale bubble with physics and ENS
 function FloatingWhaleBubble({
   whale,
   ensName,
@@ -73,7 +52,6 @@ function FloatingWhaleBubble({
     chainId: mainnet.id,
   })
 
-  // ENS Text Records
   const { data: twitter } = useEnsText({
     name: normalize(ensName),
     key: 'com.twitter',
@@ -98,13 +76,11 @@ function FloatingWhaleBubble({
     chainId: mainnet.id,
   })
 
-  // Calculate bubble size based on holdings (50-120px)
   const sizeRatio = whale.totalAssetsUsd / maxTotalUsd
   const minSize = 55
   const maxSize = 130
   const bubbleSize = Math.max(minSize, Math.min(maxSize, minSize + (maxSize - minSize) * Math.sqrt(sizeRatio)))
 
-  // Initialize random position
   useEffect(() => {
     if (containerRef.current) {
       const container = containerRef.current.getBoundingClientRect()
@@ -114,7 +90,6 @@ function FloatingWhaleBubble({
       setPosition({ x, y })
       positionRef.current = { x, y }
 
-      // Random initial velocity
       const speed = 0.2 + Math.random() * 0.4
       const angle = Math.random() * Math.PI * 2
       setVelocity({
@@ -124,7 +99,6 @@ function FloatingWhaleBubble({
     }
   }, [containerRef, bubbleSize])
 
-  // Animation loop for floating
   useEffect(() => {
     if (isDragging || isHovered) return
 
@@ -144,7 +118,6 @@ function FloatingWhaleBubble({
         let newVelX = velocity.x
         let newVelY = velocity.y
 
-        // Bounce off walls
         if (newX <= padding || newX >= container.width - bubbleSize - padding) {
           newVelX = -newVelX * 0.8
           newX = Math.max(padding, Math.min(container.width - bubbleSize - padding, newX))
@@ -154,13 +127,11 @@ function FloatingWhaleBubble({
           newY = Math.max(padding, Math.min(container.height - bubbleSize - padding, newY))
         }
 
-        // Update velocity with slight randomness
         if (Math.random() < 0.02) {
           newVelX += (Math.random() - 0.5) * 0.15
           newVelY += (Math.random() - 0.5) * 0.15
         }
 
-        // Clamp velocity
         const maxVel = 0.8
         newVelX = Math.max(-maxVel, Math.min(maxVel, newVelX))
         newVelY = Math.max(-maxVel, Math.min(maxVel, newVelY))
@@ -177,7 +148,6 @@ function FloatingWhaleBubble({
     return () => cancelAnimationFrame(animationId)
   }, [isDragging, isHovered, velocity, bubbleSize, containerRef])
 
-  // Drag handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setIsDragging(true)
@@ -194,7 +164,6 @@ function FloatingWhaleBubble({
     let newX = e.clientX - dragStartRef.current.x
     let newY = e.clientY - dragStartRef.current.y
 
-    // Constrain to container
     newX = Math.max(10, Math.min(container.width - bubbleSize - 10, newX))
     newY = Math.max(10, Math.min(container.height - bubbleSize - 10, newY))
 
@@ -205,7 +174,6 @@ function FloatingWhaleBubble({
   const handleMouseUp = useCallback(() => {
     if (isDragging) {
       setIsDragging(false)
-      // Give a small random velocity after drag
       setVelocity({
         x: (Math.random() - 0.5) * 0.4,
         y: (Math.random() - 0.5) * 0.4,
@@ -230,7 +198,6 @@ function FloatingWhaleBubble({
     maximumFractionDigits: 0,
   })
 
-  // Gradient colors based on index
   const gradients = [
     'from-purple-500 to-indigo-600',
     'from-blue-500 to-cyan-500',
@@ -259,14 +226,12 @@ function FloatingWhaleBubble({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Glow effect */}
       <div
         className={`absolute inset-0 rounded-full bg-gradient-to-br ${gradient} opacity-30 blur-xl transition-opacity duration-300 ${
           isHovered ? 'opacity-60' : ''
         }`}
       />
 
-      {/* Main bubble */}
       <div
         className={`relative w-full h-full rounded-full bg-gradient-to-br ${gradient} shadow-lg ring-2 ring-white/30 transition-transform duration-300 flex items-center justify-center overflow-hidden ${
           isHovered ? 'scale-110 ring-4 ring-white/50' : ''
@@ -288,18 +253,15 @@ function FloatingWhaleBubble({
         )}
       </div>
 
-      {/* ENS name label below bubble */}
       <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap">
         <div className="text-xs font-semibold text-purple-700 bg-white/90 px-2 py-0.5 rounded-full shadow-sm border border-purple-200">
           {ensName.length > 14 ? `${ensName.slice(0, 12)}...` : ensName}
         </div>
       </div>
 
-      {/* Hover tooltip */}
       {isHovered && (
         <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-8 z-[100] pointer-events-none">
           <div className="bg-gray-900/95 backdrop-blur-sm text-white text-xs rounded-xl px-4 py-3 shadow-2xl min-w-[260px] max-w-[340px]">
-            {/* ENS Header */}
             <div className="flex items-center gap-3 mb-3 pb-2 border-b border-gray-700">
               {ensAvatar && (
                 <img src={ensAvatar} alt={ensName} className="w-12 h-12 rounded-full ring-2 ring-purple-400" />
@@ -312,7 +274,6 @@ function FloatingWhaleBubble({
               </div>
             </div>
 
-            {/* ENS Records */}
             {(description || twitter || github || url) && (
               <div className="mb-3 pb-2 border-b border-gray-700 space-y-1.5">
                 {description && (
@@ -365,13 +326,11 @@ function FloatingWhaleBubble({
               </div>
             )}
 
-            {/* Total Holdings */}
             <div className="mb-2">
               <div className="text-gray-400 text-[10px] uppercase tracking-wide">Total Morpho Holdings</div>
               <div className="text-green-400 font-bold text-xl">{formattedTotal}</div>
             </div>
 
-            {/* Vault Positions */}
             <div>
               <div className="text-gray-400 text-[10px] uppercase tracking-wide mb-1">Vault Positions</div>
               <div className="space-y-1 max-h-[120px] overflow-y-auto">
@@ -386,7 +345,6 @@ function FloatingWhaleBubble({
               </div>
             </div>
 
-            {/* Arrow */}
             <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-gray-900/95"></div>
           </div>
         </div>
@@ -399,25 +357,36 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
   const containerRef = useRef<HTMLDivElement>(null)
   const [isClient, setIsClient] = useState(false)
   const [ensResults, setEnsResults] = useState<Map<string, string>>(new Map())
-  const [checkedCount, setCheckedCount] = useState(0)
+  const [ensResolving, setEnsResolving] = useState(false)
 
   useEffect(() => {
     setIsClient(true)
   }, [])
 
-  // Handle ENS check results
-  const handleEnsResult = useCallback((address: string, ensName: string | null) => {
-    setCheckedCount(prev => prev + 1)
-    if (ensName) {
-      setEnsResults(prev => {
-        const newMap = new Map(prev)
-        newMap.set(address.toLowerCase(), ensName)
-        return newMap
-      })
+  useEffect(() => {
+    if (isClient && whales.length > 0 && ensResults.size === 0) {
+      async function resolveEns() {
+        setEnsResolving(true)
+        try {
+          const addresses = whales.map(w => w.address as Address)
+          const resolved = await batchResolveEnsNames(addresses)
+          const withEns = new Map<string, string>()
+          resolved.forEach((name, address) => {
+            if (name) {
+              withEns.set(address, name)
+            }
+          })
+          setEnsResults(withEns)
+        } catch (err) {
+          console.error('Error batch resolving ENS:', err)
+        } finally {
+          setEnsResolving(false)
+        }
+      }
+      resolveEns()
     }
-  }, [])
+  }, [isClient, whales, ensResults.size])
 
-  // Filter whales that have ENS
   const whalesWithEns = useMemo(() => {
     return whales.filter(w => ensResults.has(w.address.toLowerCase()))
   }, [whales, ensResults])
@@ -427,7 +396,6 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
     return Math.max(...whalesWithEns.map(w => w.totalAssetsUsd))
   }, [whalesWithEns])
 
-  const isChecking = checkedCount < whales.length
   const totalValue = whalesWithEns.reduce((sum, w) => sum + w.totalAssetsUsd, 0)
 
   if (!isClient) {
@@ -445,7 +413,6 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
       ref={containerRef}
       className={`relative bg-gradient-to-br from-purple-900/10 to-indigo-900/10 rounded-2xl border border-purple-500/20 overflow-hidden ${className}`}
     >
-      {/* Background pattern */}
       <div className="absolute inset-0 opacity-5">
         <div className="absolute inset-0" style={{
           backgroundImage: `radial-gradient(circle at 2px 2px, purple 1px, transparent 0)`,
@@ -453,26 +420,16 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
         }} />
       </div>
 
-      {/* Hidden ENS checkers */}
-      {whales.map(whale => (
-        <ENSChecker
-          key={whale.address}
-          address={whale.address}
-          onResult={handleEnsResult}
-        />
-      ))}
-
-      {/* Header */}
       <div className="absolute top-4 left-4 z-20">
         <div className="flex items-center gap-2">
           <span className="text-2xl">🐋</span>
           <div>
             <h3 className="font-bold text-purple-800 text-lg">Morpho Whales</h3>
             <p className="text-xs text-purple-600">
-              {isChecking ? (
+              {ensResolving ? (
                 <span className="flex items-center gap-1">
                   <span className="inline-block w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
-                  Checking ENS for {checkedCount}/{whales.length} addresses...
+                  Resolving ENS names...
                 </span>
               ) : (
                 `${whalesWithEns.length} ENS holders across all vaults • Drag to move`
@@ -483,7 +440,6 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
         </div>
       </div>
 
-      {/* Stats badge */}
       <div className="absolute top-4 right-4 z-20">
         <div className="bg-white/80 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg">
           <div className="text-xs text-gray-500">ENS Holders TVL</div>
@@ -497,7 +453,6 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
         </div>
       </div>
 
-      {/* Floating bubbles */}
       {whalesWithEns.map((whale, index) => (
         <FloatingWhaleBubble
           key={whale.address}
@@ -509,8 +464,7 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
         />
       ))}
 
-      {/* Loading state when still checking */}
-      {isChecking && whalesWithEns.length === 0 && (
+      {ensResolving && whalesWithEns.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center">
             <div className="flex justify-center gap-2 mb-3">
@@ -523,14 +477,13 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
               ))}
             </div>
             <div className="text-purple-600 animate-pulse">
-              Scanning {whales.length} addresses for ENS names...
+              Resolving ENS names for {whales.length} addresses...
             </div>
           </div>
         </div>
       )}
 
-      {/* Empty state after checking */}
-      {!isChecking && whalesWithEns.length === 0 && (
+      {!ensResolving && whalesWithEns.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center text-purple-500">
             <span className="text-4xl mb-2 block">🐋</span>
@@ -540,7 +493,6 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
         </div>
       )}
 
-      {/* ENS badge */}
       <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 text-xs text-purple-500 bg-white/60 backdrop-blur-sm px-3 py-1.5 rounded-full">
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
           <path d="M11.944 17.97L4.58 13.62 11.943 24l7.37-10.38-7.372 4.35h.003zM12.056 0L4.69 12.223l7.365 4.354 7.365-4.35L12.056 0z"/>
@@ -548,12 +500,11 @@ export function FloatingWhales({ whales, className = '' }: FloatingWhalesProps) 
         <span>Powered by ENS</span>
       </div>
 
-      {/* Checked count indicator */}
-      {isChecking && (
+      {ensResolving && (
         <div className="absolute bottom-4 right-4 z-20">
           <div className="bg-purple-100 text-purple-700 text-xs px-3 py-1.5 rounded-full flex items-center gap-2">
             <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-            {ensResults.size} ENS found so far
+            Resolving...
           </div>
         </div>
       )}

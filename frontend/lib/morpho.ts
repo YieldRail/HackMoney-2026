@@ -809,157 +809,122 @@ export interface AggregatedWhale {
 
 const AGGREGATED_WHALES_CACHE_KEY = 'morpho_aggregated_whales_cache'
 
-// Cache for individual vault positions
-const VAULT_POSITIONS_CACHE_KEY = 'morpho_vault_positions_cache'
-const VAULT_POSITIONS_CACHE_DURATION = 10 * 60 * 1000 // 10 minutes
-
-// Fetch positions for a single vault
-async function fetchVaultPositions(
-  vaultAddress: string,
-  vaultName: string,
-  limit: number = 100
-): Promise<{ address: string; assetsUsd: number; assets: string; vaultName: string; vaultSymbol: string; assetSymbol: string; assetDecimals: number }[]> {
+// Simple query to fetch top vault positions across ALL Morpho vaults
+export async function fetchTopVaultPositions(
+  limit: number = 200
+): Promise<AggregatedWhale[]> {
   // Check cache first
-  const cacheKey = `${vaultAddress.toLowerCase()}_${limit}`
-  const cached = getFromCache<any[]>(VAULT_POSITIONS_CACHE_KEY, cacheKey)
+  const cacheKey = `top_positions_${limit}`
+  const cached = getFromCache<AggregatedWhale[]>(AGGREGATED_WHALES_CACHE_KEY, cacheKey)
   if (cached) {
+    console.log('Using cached top vault positions')
     return cached
   }
 
   const query = `
-    query GetVaultPositions($first: Int!) {
+    query GetTopVaultDepositors($first: Int!) {
       vaultPositions(
         first: $first
         orderBy: Shares
         orderDirection: Desc
-        where: { vaultAddress_in: ["${vaultAddress.toLowerCase()}"] }
       ) {
         items {
           user {
             address
           }
           vault {
+            address
+            name
             symbol
+            chain {
+              id
+            }
             asset {
               symbol
               decimals
             }
           }
           state {
+            shares
             assets
             assetsUsd
           }
+        }
+        pageInfo {
+          countTotal
         }
       }
     }
   `
 
   try {
+    console.log(`Fetching top ${limit} vault positions across all Morpho vaults...`)
     const data = await morphoGraphQL<{ vaultPositions: any }>(query, { first: limit })
 
     if (!data.vaultPositions?.items) {
+      console.log('No positions found')
       return []
     }
 
-    const positions = data.vaultPositions.items
-      .filter((item: any) => (item.state?.assetsUsd || 0) >= 100)
-      .map((item: any) => ({
-        address: item.user.address,
-        assetsUsd: item.state?.assetsUsd || 0,
-        assets: item.state?.assets || '0',
-        vaultName: vaultName,
+    console.log(`Found ${data.vaultPositions.items.length} positions (total: ${data.vaultPositions.pageInfo?.countTotal})`)
+
+    // Aggregate by user address
+    const whaleMap = new Map<string, AggregatedWhale>()
+
+    for (const item of data.vaultPositions.items) {
+      const userAddress = item.user.address.toLowerCase()
+      const assetsUsd = item.state?.assetsUsd || 0
+
+      if (assetsUsd < 100) continue // Skip tiny positions
+
+      if (!whaleMap.has(userAddress)) {
+        whaleMap.set(userAddress, {
+          address: item.user.address,
+          totalAssetsUsd: 0,
+          vaultPositions: [],
+        })
+      }
+
+      const chainId = item.vault?.chain?.id || 1
+      const chainName = chainId === 8453 ? 'Base' : chainId === 1 ? 'Ethereum' : `Chain ${chainId}`
+
+      const whale = whaleMap.get(userAddress)!
+      whale.totalAssetsUsd += assetsUsd
+      whale.vaultPositions.push({
+        vaultAddress: item.vault?.address || '',
+        vaultName: `${item.vault?.name || 'Morpho Vault'} (${chainName})`,
         vaultSymbol: item.vault?.symbol || 'mvToken',
+        assets: item.state?.assets || '0',
+        assetsUsd: assetsUsd,
         assetSymbol: item.vault?.asset?.symbol || 'USDC',
         assetDecimals: item.vault?.asset?.decimals || 6,
-      }))
-
-    // Cache the results
-    if (positions.length > 0) {
-      setToCache(VAULT_POSITIONS_CACHE_KEY, cacheKey, positions)
+      })
     }
 
-    return positions
+    // Convert to array and sort by total
+    const whales = Array.from(whaleMap.values())
+      .sort((a, b) => b.totalAssetsUsd - a.totalAssetsUsd)
+
+    console.log(`Found ${whales.length} unique addresses`)
+
+    if (whales.length > 0) {
+      setToCache(AGGREGATED_WHALES_CACHE_KEY, cacheKey, whales)
+    }
+
+    return whales
   } catch (error) {
-    console.error(`Error fetching positions for vault ${vaultName}:`, error)
+    console.error('Error fetching top vault positions:', error)
     return []
   }
 }
 
+// Legacy function - now uses the simpler query
 export async function fetchAggregatedWhales(
-  _chainId: number = 8453, // Ignored - we fetch from ALL chains
+  _chainId: number = 8453,
   limit: number = 50,
-  minTotalUsd: number = 1000
+  _minTotalUsd: number = 1000
 ): Promise<AggregatedWhale[]> {
-  // Check cache first for aggregated results
-  const cacheKey = `all_chains_${limit}`
-  const cached = getFromCache<AggregatedWhale[]>(AGGREGATED_WHALES_CACHE_KEY, cacheKey)
-  if (cached) {
-    console.log('Using cached aggregated whales data')
-    return cached
-  }
-
-  // Get ALL top vaults across ALL chains
-  const allVaults = getAllTopMorphoVaults()
-  if (allVaults.length === 0) {
-    return []
-  }
-
-  console.log(`Fetching positions from ${allVaults.length} vaults one by one...`)
-
-  // Aggregate positions by user across all vaults
-  const whaleMap = new Map<string, AggregatedWhale>()
-
-  // Query each vault one by one to avoid timeout
-  for (const vault of allVaults) {
-    console.log(`Fetching positions for ${vault.name}...`)
-
-    try {
-      const positions = await fetchVaultPositions(vault.address, vault.name, 100)
-
-      console.log(`  Found ${positions.length} positions in ${vault.name}`)
-
-      for (const pos of positions) {
-        const userAddress = pos.address.toLowerCase()
-
-        if (!whaleMap.has(userAddress)) {
-          whaleMap.set(userAddress, {
-            address: pos.address,
-            totalAssetsUsd: 0,
-            vaultPositions: [],
-          })
-        }
-
-        const whale = whaleMap.get(userAddress)!
-        whale.totalAssetsUsd += pos.assetsUsd
-        whale.vaultPositions.push({
-          vaultAddress: vault.address,
-          vaultName: pos.vaultName,
-          vaultSymbol: pos.vaultSymbol,
-          assets: pos.assets,
-          assetsUsd: pos.assetsUsd,
-          assetSymbol: pos.assetSymbol,
-          assetDecimals: pos.assetDecimals,
-        })
-      }
-    } catch (error) {
-      console.error(`Failed to fetch ${vault.name}, skipping...`, error)
-      // Continue with other vaults even if one fails
-    }
-  }
-
-  // Convert to array, filter by minTotalUsd, sort by total, limit
-  const whales = Array.from(whaleMap.values())
-    .filter(w => w.totalAssetsUsd >= minTotalUsd)
-    .sort((a, b) => b.totalAssetsUsd - a.totalAssetsUsd)
-    .slice(0, limit)
-
-  console.log(`Found ${whales.length} unique whale addresses with positions >= $${minTotalUsd}`)
-
-  if (whales.length > 0) {
-    setToCache(AGGREGATED_WHALES_CACHE_KEY, cacheKey, whales)
-  }
-
-  return whales
+  return fetchTopVaultPositions(limit * 2)
 }
 
 // Also export a function to fetch top vaults list from Morpho API

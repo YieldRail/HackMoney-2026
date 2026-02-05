@@ -7,7 +7,7 @@ import { VAULTS_CONFIG } from '@/lib/vaults-config'
 import { VaultRatingBubble } from '@/components/VaultRatingBubble'
 import type { VaultRating } from '@/lib/vault-ratings'
 import { getIndexerApiUrl } from '@/lib/vault-ratings'
-import { WhalesDashboard } from '@/components/WhalesDashboard'
+import { TopENSHolders } from '@/components/TopENSHolders'
 
 export default function Home() {
   const [ratings, setRatings] = useState<VaultRating[]>([])
@@ -38,16 +38,6 @@ export default function Home() {
         <div className="text-center mb-16">
           <h2 className="text-5xl font-bold mb-4">Lagoon Vault Integration</h2>
           <p className="text-xl text-gray-700">E2E Deposit Attribution + Deterministic Snapshot Pipeline</p>
-        </div>
-
-        {/* Floating Whales Section */}
-        <div className="mb-12">
-          <WhalesDashboard
-            chainId={8453}
-            maxWhales={100}
-            minTotalUsd={50}
-            height="h-[500px]"
-          />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
@@ -122,6 +112,11 @@ export default function Home() {
               )
             })}
           </div>
+        </div>
+
+        {/* Top Morpho Whales with ENS */}
+        <div className="border-t border-black pt-8 mt-8">
+          <TopENSHolders />
         </div>
       </div>
     </main>

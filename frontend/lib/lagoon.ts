@@ -12,7 +12,7 @@ const clients = {
   }),
   ethereum: createPublicClient({
     chain: mainnet,
-    transport: http(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://1rpc.io/eth'),
+    transport: http(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL),
   }),
   base: createPublicClient({
     chain: base,
