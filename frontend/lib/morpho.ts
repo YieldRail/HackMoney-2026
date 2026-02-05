@@ -126,9 +126,18 @@ async function morphoGraphQL<T>(query: string, variables?: Record<string, unknow
   }
 
   const result = await response.json()
-  if (result.errors) {
+
+  // Handle partial errors gracefully - if we have data, return it even if some vaults had errors
+  // This is common when querying multiple vaults where some addresses might not exist
+  if (result.errors && !result.data) {
     throw new Error(`GraphQL error: ${result.errors[0]?.message}`)
   }
+
+  // Log partial errors for debugging but don't throw
+  if (result.errors && result.data) {
+    console.log(`GraphQL partial errors (${result.errors.length} vaults not found, but got data for others)`)
+  }
+
   return result.data
 }
 
@@ -552,7 +561,7 @@ export async function fetchMorphoVaults(chainId: number): Promise<MorphoVault[]>
 
 function getTestMorphoVaults(chainId: number): MorphoVault[] {
   if (chainId !== 8453) return []
-  
+
   return [
     {
       id: 'morpho-base-usdc-v2',
@@ -566,6 +575,24 @@ function getTestMorphoVaults(chainId: number): MorphoVault[] {
       chain: 'base',
       version: 'v2',
     },
+  ]
+}
+
+// Top Morpho vaults across all chains for whale tracking (reduced list to avoid API timeout)
+function getAllTopMorphoVaults(): { address: string; chainId: number; name: string }[] {
+  return [
+    // ============ ETHEREUM MAINNET - TOP VAULTS BY TVL ============
+    { address: '0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB', chainId: 1, name: 'Steakhouse USDC' },
+    { address: '0x4881Ef0BF6d2365D3dd6499ccd7532bcdBCE0658', chainId: 1, name: 'Gauntlet USDC Core' },
+    { address: '0x78Fc2c2eD1A4cDb5402365934aE5648aDAd094d0', chainId: 1, name: 'Re7 WETH' },
+    { address: '0xd63070114470f685b75B74D60EEc7c1113d33a3D', chainId: 1, name: 'Usual Boosted USDC' },
+    { address: '0x73e65DBD630f90604062f6E02fAb9138e713edD9', chainId: 1, name: 'Spark USDC' },
+
+    // ============ BASE - TOP VAULTS BY TVL ============
+    { address: '0x7BfA7C4f149E7415b73bdeDfe609237e29CBF34A', chainId: 8453, name: 'Moonwell Flagship USDC' },
+    { address: '0xc1256Ae5FF1cf2719D4937adb3bbCCab2E00A2Ca', chainId: 8453, name: 'Gauntlet USDC Prime' },
+    { address: '0xeE8F4eC5672F09119b96Ab6fB59C27E1b7e44b61', chainId: 8453, name: 'Gauntlet WETH Prime' },
+    { address: '0x5496b42ad0deCE1E71bbF7f36FfC8913B94Cd930', chainId: 8453, name: 'Spark USDC' },
   ]
 }
 
@@ -641,5 +668,342 @@ export function getMorphoVaultVersion(vaultId: string): 'v1' | 'v2' | null {
   if (!isMorphoVault(vaultId)) return null
   const parts = vaultId.split('-')
   return parts[1] === 'v1' ? 'v1' : parts[1] === 'v2' ? 'v2' : null
+}
+
+// ============================================
+// ENS Integration: Top Vault Depositors Query
+// ============================================
+
+export interface VaultDepositor {
+  address: string
+  shares: string
+  assets: string
+  assetsUsd: number
+}
+
+export interface TopDepositorsResult {
+  depositors: VaultDepositor[]
+  totalDepositors: number
+  vaultName: string
+  vaultSymbol: string
+  assetSymbol: string
+  assetDecimals: number
+}
+
+const TOP_DEPOSITORS_CACHE_KEY = 'morpho_top_depositors_cache'
+const TOP_DEPOSITORS_CACHE_DURATION = 10 * 60 * 1000 // 10 minutes
+
+export async function fetchTopVaultDepositors(
+  vaultAddress: string,
+  chainId: number,
+  limit: number = 20,
+  minAssetsUsd: number = 100 // Minimum $100 position to show
+): Promise<TopDepositorsResult | null> {
+  // Check cache first
+  const cacheKey = `${vaultAddress.toLowerCase()}_${chainId}_${limit}`
+  const cached = getFromCache<TopDepositorsResult>(TOP_DEPOSITORS_CACHE_KEY, cacheKey)
+  if (cached) {
+    console.log('Using cached top depositors data')
+    return cached
+  }
+
+  // First fetch vault info
+  let vaultName = 'Morpho Vault'
+  let vaultSymbol = 'mvToken'
+  let assetSymbol = 'USDC'
+  let assetDecimals = 6
+
+  try {
+    const vaultData = await fetchMorphoVaultFromApi(vaultAddress, chainId)
+    if (vaultData) {
+      vaultName = vaultData.name
+      vaultSymbol = vaultData.symbol
+      assetSymbol = vaultData.asset.symbol
+      assetDecimals = vaultData.asset.decimals
+    }
+  } catch (e) {
+    console.log('Could not fetch vault info, using defaults')
+  }
+
+  // Use the vaultPositions top-level query (correct Morpho API structure)
+  // Note: vaultAddress is unique per chain, so no chainId filter needed
+  const positionsQuery = `
+    query GetVaultPositions($first: Int!) {
+      vaultPositions(
+        first: $first
+        orderBy: Shares
+        orderDirection: Desc
+        where: { vaultAddress_in: ["${vaultAddress.toLowerCase()}"] }
+      ) {
+        items {
+          user {
+            address
+          }
+          state {
+            shares
+            assets
+            assetsUsd
+          }
+        }
+        pageInfo {
+          countTotal
+        }
+      }
+    }
+  `
+
+  try {
+    const data = await morphoGraphQL<{ vaultPositions: any }>(positionsQuery, {
+      first: limit * 2, // Fetch more to filter by minAssetsUsd
+    })
+
+    if (data.vaultPositions?.items) {
+      const positions = data.vaultPositions.items
+        .filter((p: any) => (p.state?.assetsUsd || 0) >= minAssetsUsd)
+        .slice(0, limit)
+        .map((p: any) => ({
+          address: p.user.address,
+          shares: p.state?.shares || '0',
+          assets: p.state?.assets || '0',
+          assetsUsd: p.state?.assetsUsd || 0,
+        }))
+
+      const result: TopDepositorsResult = {
+        depositors: positions,
+        totalDepositors: data.vaultPositions.pageInfo?.countTotal || positions.length,
+        vaultName,
+        vaultSymbol,
+        assetSymbol,
+        assetDecimals,
+      }
+
+      if (positions.length > 0) {
+        setToCache(TOP_DEPOSITORS_CACHE_KEY, cacheKey, result)
+      }
+      return result
+    }
+  } catch (error: any) {
+    console.error('vaultPositions query error:', error)
+  }
+
+  return null
+}
+
+// ============================================
+// Cross-Vault Whale Aggregation for Homepage
+// ============================================
+
+export interface AggregatedWhale {
+  address: string
+  totalAssetsUsd: number
+  vaultPositions: {
+    vaultAddress: string
+    vaultName: string
+    vaultSymbol: string
+    assets: string
+    assetsUsd: number
+    assetSymbol: string
+    assetDecimals: number
+  }[]
+}
+
+const AGGREGATED_WHALES_CACHE_KEY = 'morpho_aggregated_whales_cache'
+
+// Cache for individual vault positions
+const VAULT_POSITIONS_CACHE_KEY = 'morpho_vault_positions_cache'
+const VAULT_POSITIONS_CACHE_DURATION = 10 * 60 * 1000 // 10 minutes
+
+// Fetch positions for a single vault
+async function fetchVaultPositions(
+  vaultAddress: string,
+  vaultName: string,
+  limit: number = 100
+): Promise<{ address: string; assetsUsd: number; assets: string; vaultName: string; vaultSymbol: string; assetSymbol: string; assetDecimals: number }[]> {
+  // Check cache first
+  const cacheKey = `${vaultAddress.toLowerCase()}_${limit}`
+  const cached = getFromCache<any[]>(VAULT_POSITIONS_CACHE_KEY, cacheKey)
+  if (cached) {
+    return cached
+  }
+
+  const query = `
+    query GetVaultPositions($first: Int!) {
+      vaultPositions(
+        first: $first
+        orderBy: Shares
+        orderDirection: Desc
+        where: { vaultAddress_in: ["${vaultAddress.toLowerCase()}"] }
+      ) {
+        items {
+          user {
+            address
+          }
+          vault {
+            symbol
+            asset {
+              symbol
+              decimals
+            }
+          }
+          state {
+            assets
+            assetsUsd
+          }
+        }
+      }
+    }
+  `
+
+  try {
+    const data = await morphoGraphQL<{ vaultPositions: any }>(query, { first: limit })
+
+    if (!data.vaultPositions?.items) {
+      return []
+    }
+
+    const positions = data.vaultPositions.items
+      .filter((item: any) => (item.state?.assetsUsd || 0) >= 100)
+      .map((item: any) => ({
+        address: item.user.address,
+        assetsUsd: item.state?.assetsUsd || 0,
+        assets: item.state?.assets || '0',
+        vaultName: vaultName,
+        vaultSymbol: item.vault?.symbol || 'mvToken',
+        assetSymbol: item.vault?.asset?.symbol || 'USDC',
+        assetDecimals: item.vault?.asset?.decimals || 6,
+      }))
+
+    // Cache the results
+    if (positions.length > 0) {
+      setToCache(VAULT_POSITIONS_CACHE_KEY, cacheKey, positions)
+    }
+
+    return positions
+  } catch (error) {
+    console.error(`Error fetching positions for vault ${vaultName}:`, error)
+    return []
+  }
+}
+
+export async function fetchAggregatedWhales(
+  _chainId: number = 8453, // Ignored - we fetch from ALL chains
+  limit: number = 50,
+  minTotalUsd: number = 1000
+): Promise<AggregatedWhale[]> {
+  // Check cache first for aggregated results
+  const cacheKey = `all_chains_${limit}`
+  const cached = getFromCache<AggregatedWhale[]>(AGGREGATED_WHALES_CACHE_KEY, cacheKey)
+  if (cached) {
+    console.log('Using cached aggregated whales data')
+    return cached
+  }
+
+  // Get ALL top vaults across ALL chains
+  const allVaults = getAllTopMorphoVaults()
+  if (allVaults.length === 0) {
+    return []
+  }
+
+  console.log(`Fetching positions from ${allVaults.length} vaults one by one...`)
+
+  // Aggregate positions by user across all vaults
+  const whaleMap = new Map<string, AggregatedWhale>()
+
+  // Query each vault one by one to avoid timeout
+  for (const vault of allVaults) {
+    console.log(`Fetching positions for ${vault.name}...`)
+
+    try {
+      const positions = await fetchVaultPositions(vault.address, vault.name, 100)
+
+      console.log(`  Found ${positions.length} positions in ${vault.name}`)
+
+      for (const pos of positions) {
+        const userAddress = pos.address.toLowerCase()
+
+        if (!whaleMap.has(userAddress)) {
+          whaleMap.set(userAddress, {
+            address: pos.address,
+            totalAssetsUsd: 0,
+            vaultPositions: [],
+          })
+        }
+
+        const whale = whaleMap.get(userAddress)!
+        whale.totalAssetsUsd += pos.assetsUsd
+        whale.vaultPositions.push({
+          vaultAddress: vault.address,
+          vaultName: pos.vaultName,
+          vaultSymbol: pos.vaultSymbol,
+          assets: pos.assets,
+          assetsUsd: pos.assetsUsd,
+          assetSymbol: pos.assetSymbol,
+          assetDecimals: pos.assetDecimals,
+        })
+      }
+    } catch (error) {
+      console.error(`Failed to fetch ${vault.name}, skipping...`, error)
+      // Continue with other vaults even if one fails
+    }
+  }
+
+  // Convert to array, filter by minTotalUsd, sort by total, limit
+  const whales = Array.from(whaleMap.values())
+    .filter(w => w.totalAssetsUsd >= minTotalUsd)
+    .sort((a, b) => b.totalAssetsUsd - a.totalAssetsUsd)
+    .slice(0, limit)
+
+  console.log(`Found ${whales.length} unique whale addresses with positions >= $${minTotalUsd}`)
+
+  if (whales.length > 0) {
+    setToCache(AGGREGATED_WHALES_CACHE_KEY, cacheKey, whales)
+  }
+
+  return whales
+}
+
+// Also export a function to fetch top vaults list from Morpho API
+export async function fetchTopMorphoVaults(minTvlUsd: number = 1000000): Promise<{ address: string; name: string; chainId: number; tvlUsd: number }[]> {
+  const query = `
+    query GetTopVaults($first: Int!) {
+      vaults(
+        first: $first
+        orderBy: TotalAssetsUsd
+        orderDirection: Desc
+      ) {
+        items {
+          address
+          name
+          symbol
+          chain {
+            id
+          }
+          state {
+            totalAssetsUsd
+          }
+        }
+      }
+    }
+  `
+
+  try {
+    const data = await morphoGraphQL<{ vaults: any }>(query, { first: 100 })
+
+    if (!data.vaults?.items) {
+      return []
+    }
+
+    return data.vaults.items
+      .filter((v: any) => (v.state?.totalAssetsUsd || 0) >= minTvlUsd)
+      .map((v: any) => ({
+        address: v.address,
+        name: v.name || 'Morpho Vault',
+        chainId: v.chain?.id || 1,
+        tvlUsd: v.state?.totalAssetsUsd || 0,
+      }))
+  } catch (error) {
+    console.error('Error fetching top vaults:', error)
+    return []
+  }
 }
 

@@ -21,6 +21,7 @@ import { TransactionLoader } from '@/components/TransactionLoader'
 import { TransactionStatus } from '@/components/TransactionStatus'
 import { PendingTransactions } from '@/components/PendingTransactions'
 import { TransactionHistory } from '@/components/TransactionHistory'
+import { WhaleWatcher } from '@/components/WhaleWatcher'
 import { VaultSelect } from '@/components/VaultSelect'
 
 const chainConfigs: Record<number, any> = {
@@ -2424,6 +2425,16 @@ function VaultsPageContent() {
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <TransactionHistory />
               </div>
+            )}
+
+            {/* Whale Watcher - Top Depositors with ENS */}
+            {selectedVault?.type?.startsWith('morpho') && (
+              <WhaleWatcher
+                vaultAddress={selectedVault.address}
+                chainId={selectedVault.chainId}
+                minPositionUsd={100}
+                maxWhales={12}
+              />
             )}
           </div>
 
