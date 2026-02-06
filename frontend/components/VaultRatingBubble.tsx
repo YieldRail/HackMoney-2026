@@ -22,7 +22,7 @@ function formatUsd(value: number | null | undefined): string {
 export function VaultRatingBubble({ rating, vaultId, vaultName, chain }: VaultRatingBubbleProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const tooltipRef = useRef<HTMLDivElement>(null)
-  const linkRef = useRef<HTMLAnchorElement>(null)
+  const linkRef = useRef<HTMLDivElement>(null)
   const tooltipPositionRef = useRef<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
