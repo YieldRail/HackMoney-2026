@@ -7,9 +7,10 @@ interface VaultSelectorProps {
   selectedVaultId: string | null
   onVaultChange: (vaultId: string) => void
   showCombined?: boolean
+  vaultIds?: string[] // Optional: filter vaults to show only these IDs
 }
 
-export function VaultSelector({ selectedVaultId, onVaultChange, showCombined = true }: VaultSelectorProps) {
+export function VaultSelector({ selectedVaultId, onVaultChange, showCombined = true, vaultIds }: VaultSelectorProps) {
   const { chain } = useAccount()
   const { switchChain } = useSwitchChain()
 
@@ -40,20 +41,22 @@ export function VaultSelector({ selectedVaultId, onVaultChange, showCombined = t
             All Vaults (Combined)
           </button>
         )}
-        {VAULTS_CONFIG.map((vault) => (
-          <button
-            key={vault.id}
-            onClick={() => handleVaultSelect(vault)}
-            className={`px-4 py-2 border-2 rounded transition-colors ${
-              selectedVaultId === vault.id
-                ? 'border-black bg-black text-white'
-                : 'border-gray-300 hover:border-black'
-            }`}
-          >
-            {vault.name}
-            <span className="ml-2 text-xs opacity-75">({vault.chain})</span>
-          </button>
-        ))}
+        {VAULTS_CONFIG
+          .filter(vault => !vaultIds || vaultIds.includes(vault.id))
+          .map((vault) => (
+            <button
+              key={vault.id}
+              onClick={() => handleVaultSelect(vault)}
+              className={`px-4 py-2 border-2 rounded transition-colors ${
+                selectedVaultId === vault.id
+                  ? 'border-black bg-black text-white'
+                  : 'border-gray-300 hover:border-black'
+              }`}
+            >
+              {vault.name}
+              <span className="ml-2 text-xs opacity-75">({vault.chain})</span>
+            </button>
+          ))}
       </div>
       {selectedVaultId && selectedVaultId !== 'combined' && (
         <p className="text-xs text-gray-500 mt-2">

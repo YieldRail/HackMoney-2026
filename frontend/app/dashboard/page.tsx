@@ -2,7 +2,7 @@
 
 import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { Address } from 'viem'
 import { formatUnits } from 'viem'
@@ -211,6 +211,28 @@ export default function Dashboard() {
   const withdrawals = selectedVaultId ? (dataCache.get(selectedVaultId)?.withdrawals || []) : []
   const aumData = selectedVaultId ? (dataCache.get(selectedVaultId)?.aum || null) : null
 
+  // Filter vaults to only show those where user has deposits, withdrawals, or balance
+  const userVaultIds = useMemo(() => {
+    const vaultIds = new Set<string>()
+    vaultIds.add('combined') // Always show combined
+    
+    // Check each vault for deposits, withdrawals, or AUM
+    VAULTS_CONFIG.forEach(vault => {
+      const vaultData = dataCache.get(vault.id)
+      if (vaultData) {
+        const hasDeposits = vaultData.deposits && vaultData.deposits.length > 0
+        const hasWithdrawals = vaultData.withdrawals && vaultData.withdrawals.length > 0
+        const hasAUM = vaultData.aum && parseFloat(vaultData.aum.aumFromYieldo || '0') > 0
+        
+        if (hasDeposits || hasWithdrawals || hasAUM) {
+          vaultIds.add(vault.id)
+        }
+      }
+    })
+    
+    return Array.from(vaultIds)
+  }, [dataCache])
+
   useEffect(() => {
     setDepositsPage(1)
     setWithdrawalsPage(1)
@@ -311,7 +333,15 @@ export default function Dashboard() {
       <main className="min-h-screen bg-white text-black">
         <nav className="border-b border-black px-6 py-4">
           <div className="max-w-7xl mx-auto flex justify-between items-center">
-            <Link href="/" className="text-2xl font-bold">Yieldo</Link>
+            <div className="flex items-center gap-6">
+              <Link href="/" className="text-2xl font-bold">Yieldo</Link>
+              <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+                Vaults
+              </Link>
+              <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+                Dashboard
+              </Link>
+            </div>
             <ConnectButton />
           </div>
         </nav>
@@ -339,6 +369,7 @@ export default function Dashboard() {
           selectedVaultId={selectedVaultId} 
           onVaultChange={setSelectedVaultId}
           showCombined={true}
+          vaultIds={userVaultIds}
         />
         {aumData && (
           <div className="border-2 border-black p-6 mb-8 bg-gray-50">

@@ -23,16 +23,39 @@ function formatUsd(value: number | null | undefined): string {
 export function VaultRatingBubble({ rating, vaultId, vaultName, chain }: VaultRatingBubbleProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const tooltipRef = useRef<HTMLDivElement>(null)
+  const linkRef = useRef<HTMLAnchorElement>(null)
+  const tooltipPositionRef = useRef<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
-    if (!showTooltip) return
+    if (!showTooltip || !linkRef.current) return
+    
+    const updateTooltipPosition = () => {
+      if (linkRef.current) {
+        const rect = linkRef.current.getBoundingClientRect()
+        tooltipPositionRef.current = {
+          top: rect.top - 10, // Position above the link
+          left: rect.right - 288, // Align to right edge (288px = 72 * 4 = w-72)
+        }
+      }
+    }
+    
+    updateTooltipPosition()
+    window.addEventListener('scroll', updateTooltipPosition, true)
+    window.addEventListener('resize', updateTooltipPosition)
+    
     const handleClickOutside = (e: MouseEvent) => {
-      if (tooltipRef.current && !tooltipRef.current.contains(e.target as Node)) {
+      if (tooltipRef.current && !tooltipRef.current.contains(e.target as Node) &&
+          linkRef.current && !linkRef.current.contains(e.target as Node)) {
         setShowTooltip(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    
+    return () => {
+      window.removeEventListener('scroll', updateTooltipPosition, true)
+      window.removeEventListener('resize', updateTooltipPosition)
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
   }, [showTooltip])
 
   const score = rating?.score ?? null
@@ -46,23 +69,33 @@ export function VaultRatingBubble({ rating, vaultId, vaultName, chain }: VaultRa
   const userAnalytics = metrics?.userAnalytics
 
   return (
-    <div className="relative inline-flex items-end justify-end" ref={tooltipRef}>
-      <Link
-        href={`/vault-scoring/${vaultId}`}
-        className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-bold shadow-md ring-1 ring-black/10 hover:brightness-95"
-        style={{ backgroundColor: ratingStyle.backgroundColor, color: ratingStyle.color }}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-        title="View full scoring"
-      >
-        <span aria-hidden className="opacity-90">Score</span>
-        <span>{score != null ? Math.round(score) : '—'}</span>
-      </Link>
+    <>
+      <div className="relative inline-flex items-end justify-end">
+        <Link
+          ref={linkRef}
+          href={`/vault-scoring/${vaultId}`}
+          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-bold shadow-md ring-1 ring-black/10 hover:brightness-95"
+          style={{ backgroundColor: ratingStyle.backgroundColor, color: ratingStyle.color }}
+          onMouseEnter={() => setShowTooltip(true)}
+          onMouseLeave={() => setShowTooltip(false)}
+          title="View full scoring"
+        >
+          <span aria-hidden className="opacity-90">Score</span>
+          <span>{score != null ? Math.round(score) : '—'}</span>
+        </Link>
+      </div>
 
-      {showTooltip && (
+      {showTooltip && tooltipPositionRef.current && (
         <div
-          className="absolute right-0 bottom-full z-[100] mb-2 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-xl"
-          style={{ minWidth: '16rem' }}
+          ref={tooltipRef}
+          className="fixed z-[9999] w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-xl"
+          style={{ 
+            minWidth: '16rem',
+            top: `${tooltipPositionRef.current.top}px`,
+            left: `${tooltipPositionRef.current.left}px`,
+            transform: 'translateY(-100%)',
+            pointerEvents: 'auto'
+          }}
           onMouseEnter={() => setShowTooltip(true)}
           onMouseLeave={() => setShowTooltip(false)}
         >
@@ -142,6 +175,6 @@ export function VaultRatingBubble({ rating, vaultId, vaultName, chain }: VaultRa
           </Link>
         </div>
       )}
-    </div>
+    </>
   )
 }

@@ -29,7 +29,15 @@ export default function Home() {
     <main className="min-h-screen bg-white text-black">
       <nav className="border-b border-black px-6 py-4">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Yieldo</h1>
+          <div className="flex items-center gap-6">
+            <h1 className="text-2xl font-bold">Yieldo</h1>
+            <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              Vaults
+            </Link>
+            <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              Dashboard
+            </Link>
+          </div>
           <ConnectButton />
         </div>
       </nav>
@@ -44,76 +52,67 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-          <Link href="/vaults" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors relative">
-            <h3 className="text-2xl font-bold mb-4">Vaults</h3>
-            <p className="text-gray-700 mb-3">Deposit any token from any chain into yield vaults</p>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span>Cross-chain deposits powered by</span>
-              <img src="/lifi.png" alt="LI.FI" className="h-3.5" />
-            </div>
-          </Link>
 
-          <Link href="/dashboard" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors">
-            <h3 className="text-2xl font-bold mb-4">Dashboard</h3>
-            <p className="text-gray-700">Track your deposits, withdrawals, and vault performance</p>
-          </Link>
-        </div>
-
-        <div className="border-t border-black pt-8 mt-8 overflow-visible">
+        <div className="border-t border-black pt-8 mt-8">
           <h3 className="text-xl font-bold mb-4">Integrated Vaults</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 overflow-visible">
-            {VAULTS_CONFIG.map((vault) => {
-              const explorerUrls: Record<string, string> = {
-                ethereum: `https://etherscan.io/address/${vault.address}`,
-                base: `https://basescan.org/address/${vault.address}`,
-                arbitrum: `https://arbiscan.io/address/${vault.address}`,
-                avalanche: `https://snowtrace.io/address/${vault.address}`,
-              }
-              const explorerNames: Record<string, string> = {
-                ethereum: 'Etherscan', base: 'Basescan', arbitrum: 'Arbiscan', avalanche: 'Snowtrace',
-              }
-              const explorerUrl = explorerUrls[vault.chain] || explorerUrls.ethereum
-              const explorerName = explorerNames[vault.chain] || 'Explorer'
-              const rating = getRatingForVault(vault.id, vault.chain)
-              return (
-                <div key={vault.id} className="relative overflow-visible bg-gray-50 border-2 border-black p-4 hover:bg-gray-100 transition-colors">
-                  <div className="absolute top-3 right-3 z-10">
-                    {ratingsLoading ? (
-                      <span className="text-xs text-gray-400">Loading score…</span>
-                    ) : (
-                      <VaultRatingBubble
-                        rating={rating}
-                        vaultId={vault.id}
-                        vaultName={vault.name}
-                        chain={vault.chain}
-                      />
-                    )}
-                  </div>
-                  <p className="font-semibold text-lg mb-2 pr-28">{vault.name}</p>
-                  <p className="text-sm text-gray-600 mb-2">{vault.type === 'lagoon' ? 'Lagoon' : vault.type?.startsWith('morpho') ? 'Morpho' : 'Yield'} Vault on {vault.chain.charAt(0).toUpperCase() + vault.chain.slice(1)}</p>
-                  <p className="text-xs text-gray-500 break-all mb-2">
-                    Address: {vault.address}
-                  </p>
-                  <div className="flex items-center gap-4 mt-3">
-                    <Link
-                      href={`/vaults?vault=${vault.id}`}
-                      className="px-4 py-2 bg-black text-white text-sm font-medium hover:bg-gray-800 transition-colors"
-                    >
-                      Deposit →
-                    </Link>
-                    <a 
-                      href={explorerUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:underline"
-                    >
-                      View on {explorerName}
-                    </a>
-                  </div>
-                </div>
-              )
-            })}
+          <div className="overflow-x-auto overflow-y-visible">
+            <table className="w-full border-2 border-black">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="border-b-2 border-black px-4 py-3 text-left font-semibold">Vault</th>
+                  <th className="border-b-2 border-black px-4 py-3 text-left font-semibold">Chain</th>
+                  <th className="border-b-2 border-black px-4 py-3 text-left font-semibold">Asset</th>
+                  <th className="border-b-2 border-black px-4 py-3 text-right font-semibold">TVL</th>
+                  <th className="border-b-2 border-black px-4 py-3 text-right font-semibold">APY</th>
+                  <th className="border-b-2 border-black px-4 py-3 text-center font-semibold">Score</th>
+                  <th className="border-b-2 border-black px-4 py-3 text-center font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {VAULTS_CONFIG.map((vault) => {
+                  const rating = getRatingForVault(vault.id, vault.chain)
+                  const tvlUsd = rating?.metrics?.tvlUsd
+                  const apy = rating?.metrics?.netApy || rating?.metrics?.apy
+                  const formatTVL = (value: number | null | undefined) => {
+                    if (!value) return '—'
+                    if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
+                    if (value >= 1e3) return `$${(value / 1e3).toFixed(2)}K`
+                    return `$${value.toFixed(2)}`
+                  }
+                  return (
+                    <tr key={vault.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-semibold">{vault.name}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600 capitalize">{vault.chain}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{vault.asset.symbol}</td>
+                      <td className="px-4 py-3 text-right font-medium">{formatTVL(tvlUsd)}</td>
+                      <td className="px-4 py-3 text-right font-medium text-green-600">
+                        {apy != null ? `${(apy * 100).toFixed(2)}%` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {ratingsLoading ? (
+                          <span className="text-xs text-gray-400">Loading…</span>
+                        ) : (
+                          <VaultRatingBubble
+                            rating={rating}
+                            vaultId={vault.id}
+                            vaultName={vault.name}
+                            chain={vault.chain}
+                          />
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <Link
+                          href={`/vaults?vault=${vault.id}`}
+                          className="px-4 py-2 bg-black text-white text-sm font-medium hover:bg-gray-800 transition-colors inline-block"
+                        >
+                          Deposit →
+                        </Link>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
 

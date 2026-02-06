@@ -348,21 +348,27 @@ export default function VaultScoringPage() {
   const { label, style: ratingStyle } = getRatingColor(score)
   const metrics: VaultRatingMetrics = rating?.metrics ?? {}
   const breakdown = rating?.score_breakdown ?? {}
+  
   // Detect Morpho vault by vault ID pattern or Morpho-specific fields
-  const isMorpho = vaultId.startsWith('morpho-') || 
-                   !!metrics.morphoName || 
-                   !!metrics.morphoSymbol || 
-                   !!metrics.source ||
-                   (metrics.source && metrics.source.startsWith('morpho'))
+  const isMorpho = vaultId.startsWith('morpho-') || !!metrics.morphoName || !!metrics.morphoSymbol || !!metrics.source || (metrics.source && metrics.source.startsWith('morpho'))
+  
   const vaultName = isMorpho ? (metrics.morphoName ?? rating?.vault_name ?? vaultConfig.name) : (metrics.lagoonName ?? rating?.vault_name ?? vaultConfig.name)
+  
   const vaultDescription = isMorpho ? metrics.description : metrics.lagoonDescription
 
   return (
     <main className="min-h-screen bg-gray-50">
       <nav className="border-b border-gray-200 bg-white px-6 py-4">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <Link href="/" className="text-gray-600 hover:text-black">← Yieldo</Link>
-          <Link href="/dashboard" className="text-sm text-gray-600 hover:text-black">Dashboard</Link>
+          <div className="flex items-center gap-6">
+            <Link href="/" className="text-gray-600 hover:text-black">← Yieldo</Link>
+            <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              Vaults
+            </Link>
+            <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              Dashboard
+            </Link>
+          </div>
         </div>
       </nav>
 
@@ -400,7 +406,7 @@ export default function VaultScoringPage() {
           <div className="space-y-8">
             <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-4">Composite Score</h2>
-              <div className="flex flex-wrap items-center gap-6">
+              <div className="flex flex-wrap items-center gap-6 mb-6">
                 <div
                   className="rounded-xl px-6 py-4"
                   style={{ backgroundColor: ratingStyle.backgroundColor, color: ratingStyle.color }}
@@ -413,10 +419,9 @@ export default function VaultScoringPage() {
                   <p className="text-sm text-gray-500">Updated {rating.updated_at ? new Date(rating.updated_at).toLocaleString() : '—'}</p>
                 </div>
               </div>
-            </section>
-
-            <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-4">Score Breakdown</h2>
+              
+              <div className="pt-4 border-t border-gray-100">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-4">Score Breakdown</h3>
               <div className={`grid grid-cols-1 gap-4 ${breakdown.userTrust != null ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
                 <div className="rounded-lg bg-gray-50 p-4">
                   <p className="text-xs font-medium text-gray-500 uppercase">Capital ({breakdown.userTrust != null ? '20%' : '25%'})</p>
@@ -450,6 +455,7 @@ export default function VaultScoringPage() {
                   <span className="inline-block px-1.5 py-0.5 rounded text-black" style={{ backgroundColor: '#f59e0b' }}>40-59 Moderate</span>{' '}
                   <span className="inline-block px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: '#ef4444' }}>0-39 Poor</span>
                 </p>
+              </div>
               </div>
             </section>
 

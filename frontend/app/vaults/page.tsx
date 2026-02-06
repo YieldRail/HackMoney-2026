@@ -1183,10 +1183,28 @@ function VaultsPageContent() {
       if (!isNative) {
         console.log('Token is not native, checking allowance on source chain:', capturedFromChainId)
 
+        // Get user's token balance to check if MAX was selected
+        const userBalance = await sourcePublicClient.readContract({
+          address: capturedFromToken.address,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [address!],
+        }) as bigint
+
         const quoteFromAmount = quoteWithCall.action?.fromAmount
           ? BigInt(quoteWithCall.action.fromAmount)
           : parsedFromAmount
-        const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
+        
+        // Check if this is a MAX amount (within 0.2% of balance, accounting for fee)
+        const feeBps = 10n // 0.1% fee
+        const maxAmountAfterFee = userBalance - (userBalance * feeBps / 10000n)
+        const isMaxAmount = parsedFromAmount >= (maxAmountAfterFee * 98n / 100n) && parsedFromAmount <= userBalance
+        
+        // Don't add buffer if MAX was selected - amount already accounts for fee
+        // For non-MAX, add minimal buffer (0.1%) for safety
+        const approvalAmount = isMaxAmount 
+          ? quoteFromAmount 
+          : quoteFromAmount + (quoteFromAmount / 1000n) // 0.1% buffer instead of 1%
 
         console.log('Approval amounts:', {
           userInput: parsedFromAmount.toString(),
@@ -2171,9 +2189,17 @@ function VaultsPageContent() {
       {/* Modern Nav */}
       <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex justify-between items-center">
-          <Link href="/" className="text-2xl font-black bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
-            Yieldo
-          </Link>
+          <div className="flex items-center gap-6">
+            <Link href="/" className="text-2xl font-black bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
+              Yieldo
+            </Link>
+            <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              Vaults
+            </Link>
+            <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              Dashboard
+            </Link>
+          </div>
           <ConnectButton />
         </div>
       </nav>
@@ -2193,87 +2219,17 @@ function VaultsPageContent() {
               />
             </div>
 
-            {/* Vault Stats - Horizontal */}
-            <div className="flex-1 flex flex-wrap items-center gap-4 lg:gap-6 lg:pt-3">
-              {/* Quick Stats */}
-              {loadingVaultRating || (loadingMorphoData && selectedVault.type?.startsWith('morpho')) ? (
-                <div className="flex gap-3">
-                  {[1, 2].map(i => <div key={i} className="h-9 w-24 bg-gray-100 rounded-lg animate-pulse" />)}
-                </div>
-              ) : vaultRating?.metrics ? (
-                <>
-                  {typeof vaultRating.metrics.tvlUsd === 'number' && (
-                    <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
-                      <span className="text-xs text-gray-500">TVL</span>
-                      <span className="font-bold text-sm">
-                        ${(vaultRating.metrics.tvlUsd / 1e6).toFixed(2)}M
-                      </span>
-                    </div>
-                  )}
-                  {typeof vaultRating.metrics.netApy === 'number' ? (
-                    <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
-                      <span className="text-xs text-green-600">Net APY</span>
-                      <span className="font-bold text-sm text-green-700">
-                        {(vaultRating.metrics.netApy * 100).toFixed(2)}%
-                      </span>
-                    </div>
-                  ) : typeof vaultRating.metrics.apy === 'number' ? (
-                    <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
-                      <span className="text-xs text-green-600">APY</span>
-                      <span className="font-bold text-sm text-green-700">
-                        {(vaultRating.metrics.apy * 100).toFixed(2)}%
-                      </span>
-                    </div>
-                  ) : null}
-                  {typeof vaultRating.metrics.sharePrice === 'number' && (
-                    <div className="flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-2">
-                      <span className="text-xs text-blue-600">Share Price</span>
-                      <span className="font-bold text-sm text-blue-700">
-                        {vaultRating.metrics.sharePrice.toFixed(4)}
-                      </span>
-                    </div>
-                  )}
-                </>
-              ) : selectedVault.type?.startsWith('morpho') && morphoVaultData ? (
-                <>
-                  <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
-                    <span className="text-xs text-gray-500">TVL</span>
-                    <span className="font-bold text-sm">${Number(morphoVaultData.tvlUsd || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-                  </div>
-                  <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
-                    <span className="text-xs text-green-600">APY</span>
-                    <span className="font-bold text-sm text-green-700">{(morphoVaultData.netApy || 0).toFixed(2)}%</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
-                    <span className="text-xs text-gray-500">TVL</span>
-                    <span className="font-bold text-sm">{formatTVL(vaultState?.totalAssets)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
-                    <span className="text-xs text-green-600">APY</span>
-                    <span className="font-bold text-sm text-green-700">
-                      {vaultState?.apr ? `${(parseFloat(vaultState.apr) * 100).toFixed(2)}%` : '-'}
-                    </span>
-                  </div>
-                </>
-              )}
-
-              {/* Vault Address Link */}
-              <a
-                href={
-                  selectedVault.chain === 'ethereum' ? `https://etherscan.io/address/${selectedVault.address}` :
-                  selectedVault.chain === 'base' ? `https://basescan.org/address/${selectedVault.address}` :
-                  selectedVault.chain === 'arbitrum' ? `https://arbiscan.io/address/${selectedVault.address}` :
-                  `https://snowtrace.io/address/${selectedVault.address}`
-                }
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-gray-400 hover:text-blue-600 font-mono transition-colors"
-              >
-                {selectedVault.address.slice(0, 6)}...{selectedVault.address.slice(-4)}
-              </a>
+            {/* Vault Info - Chain and Asset */}
+            <div className="flex-1 flex items-center gap-3 lg:pt-3">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-gray-500">Chain:</span>
+                <span className="font-semibold text-gray-900 capitalize">{selectedVault.chain}</span>
+              </div>
+              <span className="text-gray-300">•</span>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-gray-500">Asset:</span>
+                <span className="font-semibold text-gray-900">{selectedVault.asset.symbol}</span>
+              </div>
             </div>
           </div>
 
@@ -2613,7 +2569,15 @@ function VaultsPageContent() {
                       />
                       <button
                         onClick={() => {
-                          if (tokenBalance) setAmount(formatUnits(tokenBalance.value, tokenBalance.decimals))
+                          if (tokenBalance) {
+                            // Calculate MAX amount: balance - fee (0.1% = 10 bps)
+                            const balance = tokenBalance.value
+                            const feeBps = 10n // 0.1% fee
+                            const feeAmount = (balance * feeBps) / 10000n
+                            const maxAmount = balance - feeAmount
+                            const maxAmountFormatted = formatUnits(maxAmount, tokenBalance.decimals)
+                            setAmount(maxAmountFormatted)
+                          }
                         }}
                         className="px-4 py-3 bg-gray-900 text-white hover:bg-gray-800 rounded-xl font-medium transition-colors"
                       >
