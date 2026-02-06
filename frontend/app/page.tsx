@@ -31,7 +31,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-6">
             <h1 className="text-2xl font-bold">Yieldo</h1>
-            <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+            <Link href="/" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
               Vaults
             </Link>
             <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">

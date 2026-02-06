@@ -331,14 +331,14 @@ export default function Dashboard() {
   if (!isConnected) {
     return (
       <main className="min-h-screen bg-white text-black">
-        <nav className="border-b border-black px-6 py-4">
+        <nav className="border-b border-black px-6 py-4 bg-white">
           <div className="max-w-7xl mx-auto flex justify-between items-center">
             <div className="flex items-center gap-6">
-              <Link href="/" className="text-2xl font-bold">Yieldo</Link>
-              <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              <Link href="/" className="text-2xl font-bold text-black">Yieldo</Link>
+              <Link href="/" className="text-sm font-medium text-gray-900 hover:text-black transition-colors border-b-2 border-transparent hover:border-black">
                 Vaults
               </Link>
-              <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+              <Link href="/dashboard" className="text-sm font-medium text-gray-900 hover:text-black transition-colors border-b-2 border-transparent hover:border-black">
                 Dashboard
               </Link>
             </div>
@@ -355,10 +355,20 @@ export default function Dashboard() {
 
   return (
     <main className="min-h-screen bg-white text-black">
-      <nav className="border-b border-black px-6 py-4">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <Link href="/" className="text-2xl font-bold">Yieldo</Link>
-          <ConnectButton />
+      <nav className="border-b border-black px-6 py-4 bg-white">
+        <div className="max-w-7xl mx-auto flex justify-between items-center gap-4">
+          <div className="flex items-center gap-6 flex-shrink-0">
+            <Link href="/" className="text-2xl font-bold text-black whitespace-nowrap">Yieldo</Link>
+            <Link href="/vaults" className="text-sm font-medium text-gray-900 hover:text-black transition-colors border-b-2 border-transparent hover:border-black whitespace-nowrap">
+              Vaults
+            </Link>
+            <Link href="/dashboard" className="text-sm font-medium text-gray-900 hover:text-black transition-colors border-b-2 border-transparent hover:border-black whitespace-nowrap">
+              Dashboard
+            </Link>
+          </div>
+          <div className="flex-shrink-0">
+            <ConnectButton />
+          </div>
         </div>
       </nav>
 

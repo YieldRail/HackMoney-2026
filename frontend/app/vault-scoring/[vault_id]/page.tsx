@@ -362,9 +362,9 @@ export default function VaultScoringPage() {
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-6">
             <Link href="/" className="text-gray-600 hover:text-black">← Yieldo</Link>
-            <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
-              Vaults
-            </Link>
+              <Link href="/" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+                Vaults
+              </Link>
             <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
               Dashboard
             </Link>

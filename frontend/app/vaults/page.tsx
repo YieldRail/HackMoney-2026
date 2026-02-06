@@ -23,8 +23,7 @@ import { TransactionStatus } from '@/components/TransactionStatus'
 import { PendingTransactions } from '@/components/PendingTransactions'
 import { TransactionHistory } from '@/components/TransactionHistory'
 import { WhaleWatcher } from '@/components/WhaleWatcher'
-import { VaultSelect } from '@/components/VaultSelect'
-import { getIndexerApiUrl, type VaultRating, type VaultRatingMetrics } from '@/lib/vault-ratings'
+import { getIndexerApiUrl, getRatingColor, type VaultRating, type VaultRatingMetrics } from '@/lib/vault-ratings'
 
 const chainConfigs: Record<number, any> = {
   1: mainnet,
@@ -2193,7 +2192,7 @@ function VaultsPageContent() {
             <Link href="/" className="text-2xl font-black bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
               Yieldo
             </Link>
-            <Link href="/vaults" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
+            <Link href="/" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
               Vaults
             </Link>
             <Link href="/dashboard" className="text-sm font-medium text-gray-700 hover:text-black transition-colors">
@@ -2205,30 +2204,78 @@ function VaultsPageContent() {
       </nav>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        {/* Compact Vault Header Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
-          <div className="flex flex-col lg:flex-row lg:items-start gap-4">
-            {/* Vault Selector - Modern Dropdown */}
-            <div className="flex-shrink-0 lg:w-80">
-              <VaultSelect
-                vaults={allVaults}
-                selectedVaultId={selectedVaultId}
-                onChange={setSelectedVaultId}
-                morphoData={morphoVaultData}
-                loadingMorphoData={loadingMorphoData}
-              />
+        {/* Vault Header */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6">
+          <div className="flex items-center gap-4 mb-4">
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+              selectedVault.type === 'lagoon' 
+                ? 'bg-gradient-to-br from-blue-400 to-blue-600' 
+                : selectedVault.type?.startsWith('morpho')
+                ? 'bg-gradient-to-br from-purple-500 to-indigo-600'
+                : 'bg-gradient-to-br from-gray-400 to-gray-600'
+            }`}>
+              {selectedVault.type === 'lagoon' ? (
+                <span className="text-white text-lg font-bold">L</span>
+              ) : selectedVault.type?.startsWith('morpho') ? (
+                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeWidth="2" stroke="currentColor" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              ) : (
+                <span className="text-white text-lg font-bold">V</span>
+              )}
             </div>
-
-            {/* Vault Info - Chain and Asset */}
-            <div className="flex-1 flex items-center gap-3 lg:pt-3">
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-gray-500">Chain:</span>
-                <span className="font-semibold text-gray-900 capitalize">{selectedVault.chain}</span>
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {vaultRating?.vault_name || morphoVaultData?.name || selectedVault.name}
+                </h1>
+                {vaultRating?.score != null && (() => {
+                  const breakdown = vaultRating.score_breakdown ?? {}
+                  const { label, style: ratingStyle } = getRatingColor(vaultRating.score)
+                  return (
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="rounded-lg px-3 py-1.5 text-sm font-bold"
+                          style={{ backgroundColor: ratingStyle.backgroundColor, color: ratingStyle.color }}
+                        >
+                          {Math.round(vaultRating.score)}/100
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          <div className="font-medium text-gray-700">{label}</div>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {breakdown.capital != null && (
+                              <span className="text-gray-500">C:{Math.round(breakdown.capital)}</span>
+                            )}
+                            {breakdown.performance != null && (
+                              <>
+                                <span className="text-gray-300">•</span>
+                                <span className="text-gray-500">P:{Math.round(breakdown.performance)}</span>
+                              </>
+                            )}
+                            {breakdown.risk != null && (
+                              <>
+                                <span className="text-gray-300">•</span>
+                                <span className="text-gray-500">R:{Math.round(breakdown.risk)}</span>
+                              </>
+                            )}
+                            {breakdown.userTrust != null && (
+                              <>
+                                <span className="text-gray-300">•</span>
+                                <span className="text-gray-500">UT:{Math.round(breakdown.userTrust)}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
-              <span className="text-gray-300">•</span>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-gray-500">Asset:</span>
-                <span className="font-semibold text-gray-900">{selectedVault.asset.symbol}</span>
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <span className="capitalize">{selectedVault.chain}</span>
+                <span>•</span>
+                <span>{selectedVault.asset.symbol}</span>
               </div>
             </div>
           </div>
@@ -2611,15 +2658,6 @@ function VaultsPageContent() {
               </div>
             )}
 
-            {/* Whale Watcher - Top Depositors with ENS */}
-            {selectedVault?.type?.startsWith('morpho') && (
-              <WhaleWatcher
-                vaultAddress={selectedVault.address}
-                chainId={selectedVault.chainId}
-                minPositionUsd={100}
-                maxWhales={12}
-              />
-            )}
           </div>
 
           {/* Right Column - Quote & Actions */}
@@ -2946,6 +2984,354 @@ function VaultsPageContent() {
             )}
           </div>
         </div>
+
+        {/* Top Depositors & Composite Score - Side by Side */}
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left: Top Depositors */}
+          {selectedVault?.type?.startsWith('morpho') && (
+            <div className="h-full">
+              <WhaleWatcher
+                vaultAddress={selectedVault.address}
+                chainId={selectedVault.chainId}
+                minPositionUsd={100}
+                maxWhales={12}
+              />
+            </div>
+          )}
+
+          {/* Right: Composite Score & Breakdown */}
+          {vaultRating && vaultRating.metrics && (
+            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden h-full flex flex-col">
+              <div className="p-6 flex-1 flex flex-col">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-4">Composite Score</h2>
+                {(() => {
+                  const score = vaultRating.score ?? null
+                  const breakdown = vaultRating.score_breakdown ?? {}
+                  const { label, style: ratingStyle } = getRatingColor(score)
+                  const isMorpho = selectedVault.type?.startsWith('morpho')
+                  
+                  return (
+                    <div className="space-y-6 flex-1">
+                      <div className="flex flex-wrap items-center gap-6">
+                        <div
+                          className="rounded-xl px-6 py-4"
+                          style={{ backgroundColor: ratingStyle.backgroundColor, color: ratingStyle.color }}
+                        >
+                          <span className="text-4xl font-bold">{score != null ? Math.round(score) : '—'}</span>
+                          <span className="ml-2 text-lg opacity-90">/ 100</span>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900">{label}</p>
+                          <p className="text-sm text-gray-500">Updated {vaultRating.updated_at ? new Date(vaultRating.updated_at).toLocaleString() : '—'}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="pt-4 border-t border-gray-100">
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-4">Score Breakdown</h3>
+                        <div className={`grid grid-cols-1 gap-4 ${breakdown.userTrust != null ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
+                          <div className="rounded-lg bg-gray-50 p-4">
+                            <p className="text-xs font-medium text-gray-500 uppercase mb-2">Capital ({breakdown.userTrust != null ? '20%' : '25%'})</p>
+                            <p className="text-2xl font-bold text-gray-900">{breakdown.capital != null ? Math.round(breakdown.capital) : '—'}</p>
+                            <p className="text-xs text-gray-400 mt-1">{isMorpho ? 'TVL, liquidity, positions' : 'TVL size'}</p>
+                          </div>
+                          <div className="rounded-lg bg-gray-50 p-4">
+                            <p className="text-xs font-medium text-gray-500 uppercase mb-2">Performance ({breakdown.userTrust != null ? '30%' : '35%'})</p>
+                            <p className="text-2xl font-bold text-gray-900">{breakdown.performance != null ? Math.round(breakdown.performance) : '—'}</p>
+                            <p className="text-xs text-gray-400 mt-1">{isMorpho ? 'APY (daily, weekly, monthly)' : 'APR (7d, 30d, all-time)'}</p>
+                          </div>
+                          <div className="rounded-lg bg-gray-50 p-4">
+                            <p className="text-xs font-medium text-gray-500 uppercase mb-2">Risk ({breakdown.userTrust != null ? '30%' : '40%'})</p>
+                            <p className="text-2xl font-bold text-gray-900">{breakdown.risk != null ? Math.round(breakdown.risk) : '—'}</p>
+                            <p className="text-xs text-gray-400 mt-1">{isMorpho ? 'Depeg, fees, governance, warnings' : 'Pause, depeg, fees'}</p>
+                          </div>
+                          {breakdown.userTrust != null && (
+                            <div className="rounded-lg bg-blue-50 p-4">
+                              <p className="text-xs font-medium text-blue-600 uppercase mb-2">User Trust (20%)</p>
+                              <p className="text-2xl font-bold text-blue-700">{Math.round(breakdown.userTrust)}</p>
+                              <p className="text-xs text-blue-400 mt-1">Retention, holding time</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-4 border-t border-gray-100">
+                        <p className="text-xs text-gray-500">
+                          <span className="font-medium">Score Guide:</span>{' '}
+                          <span className="inline-block px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: '#10b981' }}>80-100 Excellent</span>{' '}
+                          <span className="inline-block px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: '#22c55e' }}>60-79 Good</span>{' '}
+                          <span className="inline-block px-1.5 py-0.5 rounded text-black" style={{ backgroundColor: '#f59e0b' }}>40-59 Moderate</span>{' '}
+                          <span className="inline-block px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: '#ef4444' }}>0-39 Poor</span>
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Detailed Vault Scoring - Collapsible Sections */}
+        {vaultRating && vaultRating.metrics && (
+          <div className="mt-8 space-y-3">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Detailed Scoring & Metrics</h2>
+
+            {/* Capital Metrics */}
+            <details className="group bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <summary className="cursor-pointer flex items-center justify-between p-4 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+                <span>Capital Metrics</span>
+                <svg className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </summary>
+              <div className="p-6 border-t border-gray-200 bg-gray-50">
+                <p className="text-xs text-gray-400 mb-4">Data curated by Yieldo from different protocols</p>
+                <table className="w-full">
+                  <tbody>
+                    {vaultRating.metrics.tvlUsd != null && (
+                      <tr className="border-b border-gray-200 last:border-0">
+                        <td className="py-3 pr-4 text-sm text-gray-600">TVL (USD)</td>
+                        <td className="py-3 text-right font-mono text-sm text-gray-900">
+                          {vaultRating.metrics.tvlUsd >= 1e6 
+                            ? `$${(vaultRating.metrics.tvlUsd / 1e6).toFixed(2)}M`
+                            : vaultRating.metrics.tvlUsd >= 1e3
+                            ? `$${(vaultRating.metrics.tvlUsd / 1e3).toFixed(2)}K`
+                            : `$${vaultRating.metrics.tvlUsd.toFixed(2)}`}
+                        </td>
+                      </tr>
+                    )}
+                    {vaultRating.metrics.totalSupply != null && (
+                      <tr className="border-b border-gray-200 last:border-0">
+                        <td className="py-3 pr-4 text-sm text-gray-600">Total supply (shares)</td>
+                        <td className="py-3 text-right font-mono text-sm text-gray-900">{(Number(vaultRating.metrics.totalSupply) / 1e18).toFixed(2)}</td>
+                      </tr>
+                    )}
+                    {selectedVault.type?.startsWith('morpho') && vaultRating.metrics.liquidityUsd != null && (
+                      <>
+                        <tr className="border-b border-gray-200 last:border-0">
+                          <td className="py-3 pr-4 text-sm text-gray-600">Liquidity (USD)</td>
+                          <td className="py-3 text-right font-mono text-sm text-gray-900">
+                            {vaultRating.metrics.liquidityUsd >= 1e6 
+                              ? `$${(vaultRating.metrics.liquidityUsd / 1e6).toFixed(2)}M`
+                              : vaultRating.metrics.liquidityUsd >= 1e3
+                              ? `$${(vaultRating.metrics.liquidityUsd / 1e3).toFixed(2)}K`
+                              : `$${vaultRating.metrics.liquidityUsd.toFixed(2)}`}
+                          </td>
+                        </tr>
+                        {vaultRating.metrics.liquidityRatio != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Liquidity ratio</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.liquidityRatio * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.positionCount != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Positions</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.positionCount.toLocaleString()}</td>
+                          </tr>
+                        )}
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+
+            {/* Performance Metrics */}
+            <details className="group bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <summary className="cursor-pointer flex items-center justify-between p-4 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+                <span>Performance Metrics</span>
+                <svg className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </summary>
+              <div className="p-6 border-t border-gray-200 bg-gray-50">
+                <p className="text-xs text-gray-400 mb-4">Data curated by Yieldo from different protocols</p>
+                <table className="w-full">
+                  <tbody>
+                    {selectedVault.type === 'lagoon' ? (
+                      <>
+                        {vaultRating.metrics.apr7d != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Net APR (7d)</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.apr7d * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.apr30d != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Net APR (30d)</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.apr30d * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.aprAll != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Net APR (All-time)</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.aprAll * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.aprBase != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Base APR (no airdrops)</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.aprBase * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.pricePerShareUsd != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Share price (USD)</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">${vaultRating.metrics.pricePerShareUsd.toFixed(6)}</td>
+                          </tr>
+                        )}
+                      </>
+                    ) : selectedVault.type?.startsWith('morpho') ? (
+                      <>
+                        {vaultRating.metrics.apy != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">APY (current)</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.apy * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.netApy != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Net APY (current)</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.netApy * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.dailyApy != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Daily avg APY</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.dailyApy * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.weeklyApy != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Weekly avg APY</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.weeklyApy * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.monthlyApy != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Monthly avg APY</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{(vaultRating.metrics.monthlyApy * 100).toFixed(2)}%</td>
+                          </tr>
+                        )}
+                        {vaultRating.metrics.sharePrice != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Share price</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{Number(vaultRating.metrics.sharePrice).toFixed(6)}</td>
+                          </tr>
+                        )}
+                      </>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+
+            {/* Risk Flags */}
+            <details className="group bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <summary className="cursor-pointer flex items-center justify-between p-4 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+                <span>Risk Flags</span>
+                <svg className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </summary>
+              <div className="p-6 border-t border-gray-200 bg-gray-50">
+                <table className="w-full">
+                  <tbody>
+                    {selectedVault.type === 'lagoon' ? (
+                      <>
+                        {vaultRating.metrics.vaultState != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Vault state</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.vaultState}</td>
+                          </tr>
+                        )}
+                        <tr className="border-b border-gray-200 last:border-0">
+                          <td className="py-3 pr-4 text-sm text-gray-600">Vault paused</td>
+                          <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.vaultPaused ? 'Yes' : 'No'}</td>
+                        </tr>
+                        {vaultRating.metrics.assetDepeg != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Asset depeg</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.assetDepeg ? 'Yes' : 'No'}</td>
+                          </tr>
+                        )}
+                        <tr className="border-b border-gray-200 last:border-0">
+                          <td className="py-3 pr-4 text-sm text-gray-600">Whitelist activated</td>
+                          <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.isWhitelistActivated ? 'Yes' : 'No'}</td>
+                        </tr>
+                      </>
+                    ) : selectedVault.type?.startsWith('morpho') ? (
+                      <>
+                        {vaultRating.metrics.assetDepeg != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Asset depeg</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.assetDepeg ? 'Yes' : 'No'}</td>
+                          </tr>
+                        )}
+                        <tr className="border-b border-gray-200 last:border-0">
+                          <td className="py-3 pr-4 text-sm text-gray-600">Listed on Morpho</td>
+                          <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.listed ? 'Yes' : 'No'}</td>
+                        </tr>
+                        {vaultRating.metrics.warningCount != null && (
+                          <tr className="border-b border-gray-200 last:border-0">
+                            <td className="py-3 pr-4 text-sm text-gray-600">Warnings</td>
+                            <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.warningCount}</td>
+                          </tr>
+                        )}
+                      </>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+
+            {/* User Analytics (if available) */}
+            {vaultRating.metrics.userAnalytics && (
+              <details className="group bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <summary className="cursor-pointer flex items-center justify-between p-4 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+                  <span>User Behavior Analytics</span>
+                  <svg className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </summary>
+                <div className="p-6 border-t border-gray-200 bg-gray-50">
+                  <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200">
+                    <span className="text-xs text-gray-500">Trust Score</span>
+                    <span
+                      className="px-3 py-1.5 rounded text-sm font-bold text-white"
+                      style={{
+                        backgroundColor: vaultRating.metrics.userAnalytics.trustScore >= 70 ? '#10b981' : vaultRating.metrics.userAnalytics.trustScore >= 50 ? '#f59e0b' : '#ef4444'
+                      }}
+                    >
+                      {vaultRating.metrics.userAnalytics.trustScore}
+                    </span>
+                  </div>
+                  <table className="w-full">
+                    <tbody>
+                      <tr className="border-b border-gray-200 last:border-0">
+                        <td className="py-3 pr-4 text-sm text-gray-600">Total Users</td>
+                        <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.userAnalytics.totalUsers}</td>
+                      </tr>
+                      <tr className="border-b border-gray-200 last:border-0">
+                        <td className="py-3 pr-4 text-sm text-gray-600">Active Holders</td>
+                        <td className="py-3 text-right font-mono text-sm text-green-600">{vaultRating.metrics.userAnalytics.activeHolders}</td>
+                      </tr>
+                      <tr className="border-b border-gray-200 last:border-0">
+                        <td className="py-3 pr-4 text-sm text-gray-600">Retention Rate</td>
+                        <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.userAnalytics.retentionRate}%</td>
+                      </tr>
+                      <tr className="border-b border-gray-200 last:border-0">
+                        <td className="py-3 pr-4 text-sm text-gray-600">Avg Holding</td>
+                        <td className="py-3 text-right font-mono text-sm text-gray-900">{vaultRating.metrics.userAnalytics.avgHoldingDays}d</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

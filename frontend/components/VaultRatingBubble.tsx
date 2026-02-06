@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useState, useRef, useEffect } from 'react'
 import type { VaultRating } from '@/lib/vault-ratings'
 import { getRatingColor } from '@/lib/vault-ratings'
@@ -71,18 +70,17 @@ export function VaultRatingBubble({ rating, vaultId, vaultName, chain }: VaultRa
   return (
     <>
       <div className="relative inline-flex items-end justify-end">
-        <Link
+        <div
           ref={linkRef}
-          href={`/vault-scoring/${vaultId}`}
-          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-bold shadow-md ring-1 ring-black/10 hover:brightness-95"
+          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-bold shadow-md ring-1 ring-black/10 hover:brightness-95 cursor-default"
           style={{ backgroundColor: ratingStyle.backgroundColor, color: ratingStyle.color }}
           onMouseEnter={() => setShowTooltip(true)}
           onMouseLeave={() => setShowTooltip(false)}
-          title="View full scoring"
+          title="Hover for score breakdown"
         >
           <span aria-hidden className="opacity-90">Score</span>
           <span>{score != null ? Math.round(score) : '—'}</span>
-        </Link>
+        </div>
       </div>
 
       {showTooltip && tooltipPositionRef.current && (
@@ -167,12 +165,6 @@ export function VaultRatingBubble({ rating, vaultId, vaultName, chain }: VaultRa
               </>
             )}
           </div>
-          <Link
-            href={`/vault-scoring/${vaultId}`}
-            className="mt-3 block w-full rounded bg-gray-900 py-1.5 text-center text-xs font-medium text-white hover:bg-gray-800"
-          >
-            View full scoring →
-          </Link>
         </div>
       )}
     </>
