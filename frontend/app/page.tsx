@@ -52,18 +52,6 @@ export default function Home() {
           </Link>
         </div>
 
-        <div className="border-t border-black pt-8">
-          <h3 className="text-xl font-bold mb-4">Features</h3>
-          <ul className="space-y-2 text-gray-700">
-            <li>• EIP-712 intent verification for deposits</li>
-            <li>• Async vault support (Lagoon on Avalanche & Ethereum)</li>
-            <li>• Real-time event indexing</li>
-            <li>• Daily deterministic snapshots</li>
-            <li>• Cross-chain deposits via LI.FI (any token, any chain)</li>
-            <li>• Direct deposits (same token, same chain)</li>
-          </ul>
-        </div>
-
         <div className="border-t border-black pt-8 mt-8 overflow-visible">
           <h3 className="text-xl font-bold mb-4">Integrated Vaults</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 overflow-visible">

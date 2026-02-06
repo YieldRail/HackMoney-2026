@@ -1008,18 +1008,25 @@ async function startIndexing() {
     const client = getClientForVault(vault);
     
     try {
+      const latestBlock = await client.getBlockNumber();
       if (meta?.value) {
-        lastProcessedBlocks[vault.chain] = BigInt(meta.value);
+        const savedBlock = BigInt(meta.value);
+        // If the gap is greater than 100 blocks, skip ahead to avoid processing a huge backlog on restart
+        if (latestBlock - savedBlock > 100n) {
+          lastProcessedBlocks[vault.chain] = latestBlock - 100n;
+          console.log(`[${vault.chain}] Gap too large (${latestBlock - savedBlock} blocks), skipping ahead to ${lastProcessedBlocks[vault.chain]}`);
+        } else {
+          lastProcessedBlocks[vault.chain] = savedBlock;
+        }
       } else {
-        const latestBlock = await client.getBlockNumber();
         lastProcessedBlocks[vault.chain] = latestBlock - 100n;
-        await colMeta.updateOne(
-          { _id: metaKey },
-          { $set: { value: lastProcessedBlocks[vault.chain].toString(), updated_at: new Date() } },
-          { upsert: true }
-        );
       }
-      
+      await colMeta.updateOne(
+        { _id: metaKey },
+        { $set: { value: lastProcessedBlocks[vault.chain].toString(), updated_at: new Date() } },
+        { upsert: true }
+      );
+
       console.log(`[${vault.chain}] Starting indexing from block ${lastProcessedBlocks[vault.chain]}`);
     } catch (error) {
       console.error(`[${vault.chain}] Failed to initialize indexing:`, error.message);
