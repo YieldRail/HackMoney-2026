@@ -4,9 +4,13 @@ async function main() {
   console.log("Deploying DepositRouter...");
   console.log("Network:", hre.network.name);
   
-  const rpcUrl = hre.network.name === 'mainnet' 
-    ? (process.env.ETHEREUM_RPC_URL || "https://rpc.fullsend.to")
-    : (process.env.AVALANCHE_RPC_URL || "https://api.avax.network/ext/bc/C/rpc");
+  const rpcUrls = {
+    mainnet: process.env.ETHEREUM_RPC_URL || "https://rpc.fullsend.to",
+    avalanche: process.env.AVALANCHE_RPC_URL || "https://api.avax.network/ext/bc/C/rpc",
+    arbitrum: process.env.ARBITRUM_RPC_URL || "https://arb1.arbitrum.io/rpc",
+    base: process.env.BASE_RPC_URL || "https://mainnet.base.org",
+  };
+  const rpcUrl = rpcUrls[hre.network.name] || rpcUrls.mainnet;
   console.log("RPC URL:", rpcUrl);
 
   const [deployer] = await hre.ethers.getSigners();
@@ -14,11 +18,12 @@ async function main() {
 
   try {
     const balance = await hre.ethers.provider.getBalance(deployer.address);
-    const nativeToken = hre.network.name === 'mainnet' ? 'ETH' : 'AVAX';
+    const nativeTokens = { mainnet: 'ETH', avalanche: 'AVAX', arbitrum: 'ETH', base: 'ETH' };
+    const nativeToken = nativeTokens[hre.network.name] || 'ETH';
     console.log("Account balance:", hre.ethers.formatEther(balance), nativeToken);
-    
+
     if (balance === 0n) {
-      console.error(`❌ ERROR: Account has no ${nativeToken}. Please fund your account first.`);
+      console.error(`ERROR: Account has no ${nativeToken}. Please fund your account first.`);
       process.exit(1);
     }
   } catch (error) {
@@ -41,9 +46,13 @@ async function main() {
     if (tx) {
       console.log("✅ Transaction sent! Hash:", tx.hash);
       console.log("⏳ Waiting for confirmation (this may take 30-60 seconds)...");
-      const explorerUrl = hre.network.name === 'mainnet'
-        ? `https://etherscan.io/tx/${tx.hash}`
-        : `https://snowtrace.io/tx/${tx.hash}`;
+      const txExplorers = {
+        mainnet: `https://etherscan.io/tx/${tx.hash}`,
+        avalanche: `https://snowtrace.io/tx/${tx.hash}`,
+        arbitrum: `https://arbiscan.io/tx/${tx.hash}`,
+        base: `https://basescan.org/tx/${tx.hash}`,
+      };
+      const explorerUrl = txExplorers[hre.network.name] || `https://etherscan.io/tx/${tx.hash}`;
       console.log("   View on explorer:", explorerUrl);
     } else {
       console.log("⏳ Waiting for deployment...");
@@ -52,10 +61,9 @@ async function main() {
     await depositRouter.waitForDeployment();
     console.log("✅ Deployment confirmed!");
   } catch (error) {
-    console.error("❌ Deployment failed:", error.message);
-    const nativeToken = hre.network.name === 'mainnet' ? 'ETH' : 'AVAX';
+    console.error("Deployment failed:", error.message);
     if (error.message.includes("insufficient funds")) {
-      console.error(`   Your account doesn't have enough ${nativeToken} for gas fees.`);
+      console.error(`   Your account doesn't have enough native token for gas fees.`);
     } else if (error.message.includes("network")) {
       console.error("   Network error. Check your RPC URL and internet connection.");
     }
@@ -76,9 +84,13 @@ async function main() {
   console.log("\nDeployment Info:");
   console.log(JSON.stringify(deploymentInfo, null, 2));
 
-  const explorerUrl = hre.network.name === 'mainnet'
-    ? `https://etherscan.io/address/${address}`
-    : `https://snowtrace.io/address/${address}`;
+  const explorers = {
+    mainnet: `https://etherscan.io/address/${address}`,
+    avalanche: `https://snowtrace.io/address/${address}`,
+    arbitrum: `https://arbiscan.io/address/${address}`,
+    base: `https://basescan.org/address/${address}`,
+  };
+  const explorerUrl = explorers[hre.network.name] || `https://etherscan.io/address/${address}`;
   const verifyNetwork = hre.network.name;
   
   console.log("\n📝 Next steps:");

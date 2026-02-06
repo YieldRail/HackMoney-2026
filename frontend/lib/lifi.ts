@@ -394,7 +394,7 @@ export async function checkBridgeSupportsContractCalls(
         fromTokenAddress: toToken,
         toContractAddress: contractAddress,
         toContractCallData: contractCallData,
-        toContractGasLimit: '500000',
+        toContractGasLimit: '2000000',
         toApprovalAddress: contractAddress,
         requiresDeposit: true,
       }]),
@@ -497,7 +497,7 @@ export async function getQuoteWithContractCall(
         toTokenAddress: toToken,
         toContractAddress: contractAddress,
         toContractCallData: contractCallData,
-        toContractGasLimit: '800000',
+        toContractGasLimit: '2000000',
         toApprovalAddress: contractAddress,
         requiresDeposit: true, // Transfer tokens to contract before calling
       }],

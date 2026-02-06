@@ -1,5 +1,5 @@
 import { Address, createPublicClient, http } from 'viem'
-import { base } from 'viem/chains'
+import { mainnet, base, arbitrum } from 'viem/chains'
 import ERC4626_ABI from './erc4626-abi.json'
 import ERC20_ABI from './erc20-abi.json'
 
@@ -105,10 +105,25 @@ export interface MorphoUserPosition {
 }
 
 function getRpcUrl(chainId: number): string {
-  if (chainId === 8453) {
-    return process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://base.meowrpc.com'
+  switch (chainId) {
+    case 1:
+      return process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://eth.llamarpc.com'
+    case 8453:
+      return process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://base.meowrpc.com'
+    case 42161:
+      return process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc'
+    default:
+      return 'https://eth.llamarpc.com'
   }
-  return 'https://base.meowrpc.com'
+}
+
+function getChainForId(chainId: number) {
+  switch (chainId) {
+    case 1: return mainnet
+    case 8453: return base
+    case 42161: return arbitrum
+    default: return mainnet
+  }
 }
 
 // Morpho GraphQL API queries
@@ -473,11 +488,9 @@ export async function fetchMorphoVaultDisplayData(
 }
 
 export async function fetchMorphoVaults(chainId: number): Promise<MorphoVault[]> {
-  if (chainId !== 8453) return []
-  
   try {
     const client = createPublicClient({
-      chain: base,
+      chain: getChainForId(chainId),
       transport: http(getRpcUrl(chainId)),
     })
     
@@ -560,13 +573,11 @@ export async function fetchMorphoVaults(chainId: number): Promise<MorphoVault[]>
 }
 
 function getTestMorphoVaults(chainId: number): MorphoVault[] {
-  if (chainId !== 8453) return []
-
-  return [
+  const allVaults: MorphoVault[] = [
     {
       id: 'morpho-base-usdc-v2',
       address: '0x7BfA7C4f149E7415b73bdeDfe609237e29CBF34A' as Address,
-      name: 'Morpho USDC Vault V2',
+      name: 'Spark USDC Vault',
       symbol: 'mvUSDC',
       asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
       assetSymbol: 'USDC',
@@ -575,7 +586,56 @@ function getTestMorphoVaults(chainId: number): MorphoVault[] {
       chain: 'base',
       version: 'v2',
     },
+    {
+      id: 'morpho-ethereum-steakhouse-usdc',
+      address: '0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB' as Address,
+      name: 'Steakhouse USDC',
+      symbol: 'steakUSDC',
+      asset: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as Address,
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
+      chainId: 1,
+      chain: 'ethereum',
+      version: 'v2',
+    },
+    {
+      id: 'morpho-ethereum-usdc-v2',
+      address: '0xc582F04d8a82795aa2Ff9c8bb4c1c889fe7b754e' as Address,
+      name: 'Gauntlet USDC Frontier',
+      symbol: 'mvUSDC',
+      asset: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as Address,
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
+      chainId: 1,
+      chain: 'ethereum',
+      version: 'v2',
+    },
+    {
+      id: 'morpho-base-usdc-v2-2',
+      address: '0xBEEFE94c8aD530842bfE7d8B397938fFc1cb83b2' as Address,
+      name: 'Steakhouse Prime USDC',
+      symbol: 'mvUSDC',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
+      chainId: 8453,
+      chain: 'base',
+      version: 'v2',
+    },
+    {
+      id: 'morpho-arbitrum-usdc',
+      address: '0x4B6F1C9E5d470b97181786b26da0d0945A7cf027' as Address,
+      name: 'Hyperithm USDC',
+      symbol: 'mvUSDC',
+      asset: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as Address,
+      assetSymbol: 'USDC',
+      assetDecimals: 6,
+      chainId: 42161,
+      chain: 'arbitrum',
+      version: 'v2',
+    },
   ]
+  return allVaults.filter(v => v.chainId === chainId)
 }
 
 // Top Morpho vaults across all chains for whale tracking (reduced list to avoid API timeout)
@@ -605,7 +665,7 @@ export async function fetchMorphoVaultData(vaultAddress: Address, chainId: numbe
 } | null> {
   try {
     const client = createPublicClient({
-      chain: chainId === 8453 ? base : base,
+      chain: getChainForId(chainId),
       transport: http(getRpcUrl(chainId)),
     })
     

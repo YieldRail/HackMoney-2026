@@ -15,10 +15,15 @@ async function main() {
   const FEE_COLLECTOR = process.env.FEE_COLLECTOR || "0xBEb2986BD5b7ADDB360D0BbdAD9a7DE21854F427";
   
   const network = hre.network.name;
-  const explorerName = network === 'mainnet' ? 'Etherscan' : 'Snowtrace';
-  const explorerUrl = network === 'mainnet' 
-    ? `https://etherscan.io/address/${contractAddress}#code`
-    : `https://snowtrace.io/address/${contractAddress}#code`;
+  const explorerNames = { mainnet: 'Etherscan', avalanche: 'Snowtrace', arbitrum: 'Arbiscan', base: 'Basescan' };
+  const explorerBases = {
+    mainnet: 'https://etherscan.io',
+    avalanche: 'https://snowtrace.io',
+    arbitrum: 'https://arbiscan.io',
+    base: 'https://basescan.org',
+  };
+  const explorerName = explorerNames[network] || 'Explorer';
+  const explorerUrl = `${explorerBases[network] || explorerBases.mainnet}/address/${contractAddress}#code`;
 
   console.log(`Verifying contract at ${contractAddress} on ${explorerName}...`);
   console.log(`Network: ${network}`);

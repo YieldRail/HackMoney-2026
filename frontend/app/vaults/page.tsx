@@ -16,6 +16,7 @@ import { signDepositIntent, getIntentHash, type DepositIntent } from '@/lib/eip7
 import { useWalletClient } from 'wagmi'
 import DEPOSIT_ROUTER_ABI from '@/lib/deposit-router-abi.json'
 import ERC20_ABI from '@/lib/erc20-abi.json'
+import ERC4626_ABI from '@/lib/erc4626-abi.json'
 import { CustomSelect } from '@/components/CustomSelect'
 import { TransactionLoader } from '@/components/TransactionLoader'
 import { TransactionStatus } from '@/components/TransactionStatus'
@@ -82,6 +83,7 @@ function VaultsPageContent() {
     message: string
     txHash?: string
   } | null>(null)
+  const [vaultCapacityError, setVaultCapacityError] = useState<string | null>(null)
   // Lock parameters when execution starts to prevent UI changes affecting the flow
   const [lockedParams, setLockedParams] = useState<{
     fromChainId: number
@@ -138,8 +140,9 @@ function VaultsPageContent() {
 
   const fetchVaultState = async () => {
     if (!selectedVault) return
-    // Clear Morpho data when switching vaults
+    // Clear Morpho data and capacity errors when switching vaults
     setMorphoVaultData(null)
+    setVaultCapacityError(null)
     try {
       if (selectedVault.type === 'lagoon') {
         const state = await getVaultState(selectedVault.address as Address, selectedVault.chain, true)
@@ -249,6 +252,7 @@ function VaultsPageContent() {
     setSuccessTxHashes({})
     setShowError(false)
     setErrorInfo(null)
+    setVaultCapacityError(null)
     setLoadingQuote(true)
     try {
       const fromAmount = parseUnits(amount, fromToken.decimals).toString()
@@ -257,6 +261,41 @@ function VaultsPageContent() {
         setQuote(null)
         setLoadingQuote(false)
         return
+      }
+
+      // Check vault capacity for Morpho (ERC4626) vaults before fetching quote
+      if (selectedVault.type?.startsWith('morpho')) {
+        try {
+          const vaultChainConfig = chainConfigs[selectedVault.chainId]
+          if (vaultChainConfig) {
+            const vaultClient = createPublicClient({
+              chain: vaultChainConfig,
+              transport: http(),
+            })
+            const maxDepositAmount = await vaultClient.readContract({
+              address: selectedVault.address as Address,
+              abi: ERC4626_ABI,
+              functionName: 'maxDeposit',
+              args: [depositRouterAddress],
+            }) as bigint
+            const depositAmountInAsset = parseUnits(amount, selectedVault.asset.decimals)
+            if (maxDepositAmount === 0n) {
+              setVaultCapacityError('This vault has reached its supply cap and cannot accept deposits right now. Please try another vault.')
+              setQuote(null)
+              setLoadingQuote(false)
+              return
+            } else if (maxDepositAmount < depositAmountInAsset) {
+              const maxFormatted = formatUnits(maxDepositAmount, selectedVault.asset.decimals)
+              setVaultCapacityError(`This vault can only accept up to ${Number(maxFormatted).toLocaleString()} ${selectedVault.asset.symbol} more. Please reduce your amount or try another vault.`)
+              setQuote(null)
+              setLoadingQuote(false)
+              return
+            }
+          }
+        } catch (e) {
+          console.warn('Could not check vault maxDeposit:', e)
+          // Continue with quote fetch - the vault deposit will fail on-chain if truly at cap
+        }
       }
       const toTokenForSwap = selectedVault.asset.address as Address
       const isDirectDeposit = fromChainId === selectedVault.chainId && fromToken.address.toLowerCase() === toTokenForSwap.toLowerCase()
@@ -2200,6 +2239,7 @@ function VaultsPageContent() {
                 href={
                   selectedVault.chain === 'ethereum' ? `https://etherscan.io/address/${selectedVault.address}` :
                   selectedVault.chain === 'base' ? `https://basescan.org/address/${selectedVault.address}` :
+                  selectedVault.chain === 'arbitrum' ? `https://arbiscan.io/address/${selectedVault.address}` :
                   `https://snowtrace.io/address/${selectedVault.address}`
                 }
                 target="_blank"
@@ -2718,8 +2758,20 @@ function VaultsPageContent() {
               </div>
             )}
 
+            {/* Vault at Capacity */}
+            {vaultCapacityError && !loadingQuote && (
+              <div className="bg-amber-50 rounded-2xl shadow-sm border border-amber-200 p-6 text-center">
+                <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-6 h-6 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+                <p className="text-amber-700 text-sm font-medium">{vaultCapacityError}</p>
+              </div>
+            )}
+
             {/* No Quote Available */}
-            {!quote && !loadingQuote && amount && fromToken && !needsChainSwitch && (
+            {!quote && !loadingQuote && !vaultCapacityError && amount && fromToken && !needsChainSwitch && (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center">
                 <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
                   <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

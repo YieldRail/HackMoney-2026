@@ -3,7 +3,7 @@ import { mainnet } from 'viem/chains'
 
 const ensClient = createPublicClient({
   chain: mainnet,
-  transport: http(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL, {
+  transport: http(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://eth.llamarpc.com', {
     batch: {
       wait: 0,
       batchSize: 1000,
@@ -40,27 +40,29 @@ export async function batchResolveEnsNames(
     chunks.push(addressesToResolve.slice(i, i + CHUNK_SIZE))
   }
 
-  for (const chunk of chunks) {
-    try {
-      const names = await Promise.all(
-        chunk.map(address =>
-          ensClient.getEnsName({ address }).catch(() => null)
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      try {
+        const names = await Promise.all(
+          chunk.map(address =>
+            ensClient.getEnsName({ address }).catch(() => null)
+          )
         )
-      )
-      
-      chunk.forEach((address, i) => {
-        const name = names[i]
-        const addressLower = address.toLowerCase()
-        result.set(addressLower, name)
-        ensCache.set(addressLower, { name, timestamp: now })
-      })
-    } catch (error) {
-      console.error('Error batch resolving ENS names for chunk:', error)
-      chunk.forEach(address => {
-        result.set(address.toLowerCase(), null)
-      })
-    }
-  }
+
+        chunk.forEach((address, i) => {
+          const name = names[i]
+          const addressLower = address.toLowerCase()
+          result.set(addressLower, name)
+          ensCache.set(addressLower, { name, timestamp: now })
+        })
+      } catch (error) {
+        console.error('Error batch resolving ENS names for chunk:', error)
+        chunk.forEach(address => {
+          result.set(address.toLowerCase(), null)
+        })
+      }
+    })
+  )
 
   return result
 }

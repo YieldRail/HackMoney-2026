@@ -56,10 +56,17 @@ export default function Home() {
           <h3 className="text-xl font-bold mb-4">Integrated Vaults</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 overflow-visible">
             {VAULTS_CONFIG.map((vault) => {
-              const explorerUrl = vault.chain === 'ethereum'
-                ? `https://etherscan.io/address/${vault.address}`
-                : `https://snowtrace.io/address/${vault.address}`
-              const explorerName = vault.chain === 'ethereum' ? 'Etherscan' : 'Snowtrace'
+              const explorerUrls: Record<string, string> = {
+                ethereum: `https://etherscan.io/address/${vault.address}`,
+                base: `https://basescan.org/address/${vault.address}`,
+                arbitrum: `https://arbiscan.io/address/${vault.address}`,
+                avalanche: `https://snowtrace.io/address/${vault.address}`,
+              }
+              const explorerNames: Record<string, string> = {
+                ethereum: 'Etherscan', base: 'Basescan', arbitrum: 'Arbiscan', avalanche: 'Snowtrace',
+              }
+              const explorerUrl = explorerUrls[vault.chain] || explorerUrls.ethereum
+              const explorerName = explorerNames[vault.chain] || 'Explorer'
               const rating = getRatingForVault(vault.id, vault.chain)
               return (
                 <div key={vault.id} className="relative overflow-visible bg-gray-50 border-2 border-black p-4 hover:bg-gray-100 transition-colors">

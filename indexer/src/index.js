@@ -1,13 +1,20 @@
 import express from 'express';
 import { createPublicClient, http, parseAbiItem } from 'viem';
-import { avalanche, mainnet } from 'viem/chains';
+import { avalanche, mainnet, base, arbitrum } from 'viem/chains';
+
+const CHAIN_MAP = {
+  avalanche,
+  ethereum: mainnet,
+  base,
+  arbitrum,
+};
 import { MongoClient } from 'mongodb';
 import cron from 'node-cron';
 import { Vault } from '@lagoon-protocol/v0-viem';
 import { VaultUtils } from '@lagoon-protocol/v0-core';
 import dotenv from 'dotenv';
 import { VAULTS_CONFIG, getVaultById, getVaultByAddress } from './vaults-config.js';
-import { indexDepositRouterEventsForVault, indexVaultEventsForVault, setRateLimitHandler } from './vault-indexer.js';
+import { indexDepositRouterEventsForVault, indexVaultEventsForVault, indexDepositRouterEventsForChain, indexVaultEventsForChain, setRateLimitHandler } from './vault-indexer.js';
 
 let runVaultKPI = null;
 let getUnderlyingPrice = null;
@@ -100,7 +107,7 @@ for (const vault of VAULTS_CONFIG) {
     const primaryRpc = vault.rpcUrls[0];
     try {
       clients[vault.chain] = createPublicClient({
-        chain: vault.chain === 'ethereum' ? mainnet : avalanche,
+        chain: CHAIN_MAP[vault.chain] || mainnet,
         transport: http(primaryRpc, {
           timeout: 30000,
           retryCount: 0,
@@ -113,7 +120,7 @@ for (const vault of VAULTS_CONFIG) {
         try {
           console.log(`[${vault.chain}] Trying fallback RPC ${i + 1}: ${vault.rpcUrls[i]}`);
           clients[vault.chain] = createPublicClient({
-            chain: vault.chain === 'ethereum' ? mainnet : avalanche,
+            chain: CHAIN_MAP[vault.chain] || mainnet,
             transport: http(vault.rpcUrls[i], {
               timeout: 30000,
               retryCount: 0,
@@ -151,7 +158,7 @@ async function rotateRpcForChain(chain, vaultConfig) {
   
   try {
     clients[chain] = createPublicClient({
-      chain: chain === 'ethereum' ? mainnet : avalanche,
+      chain: CHAIN_MAP[chain] || mainnet,
       transport: http(newRpc, {
         timeout: 30000,
         retryCount: 0,
@@ -975,43 +982,43 @@ async function startIndexing() {
     return executeWithRateLimitHandling(vaultConfig, operation);
   });
 
+  const testedChains = new Set();
   for (const vault of VAULTS_CONFIG) {
+    if (testedChains.has(vault.chain)) continue;
+    testedChains.add(vault.chain);
     const client = getClientForVault(vault);
     try {
       console.log(`[${vault.chain}] Testing RPC connection...`);
       const testBlock = await client.getBlockNumber();
-      console.log(`[${vault.chain}] ✅ RPC connection successful. Latest block: ${testBlock}`);
+      console.log(`[${vault.chain}] RPC connection successful. Latest block: ${testBlock}`);
       try {
         await client.getLogs({
           address: vault.address,
           fromBlock: testBlock - 10n,
           toBlock: testBlock,
         });
-        console.log(`[${vault.chain}] ✅ RPC supports eth_getLogs`);
+        console.log(`[${vault.chain}] RPC supports eth_getLogs`);
       } catch (logsError) {
-        console.error(`[${vault.chain}] ❌ RPC does NOT support eth_getLogs:`, logsError.message);
-        if (logsError.message && logsError.message.includes('eth_getLogs')) {
-          console.error(`[${vault.chain}] CRITICAL: Current RPC (${vault.rpcUrls[0]}) does not support eth_getLogs method!`);
-          console.error(`[${vault.chain}] Please set ${vault.chain.toUpperCase()}_RPC_URL environment variable to a working RPC endpoint`);
-        }
+        console.error(`[${vault.chain}] RPC does NOT support eth_getLogs:`, logsError.message);
       }
     } catch (error) {
-      console.error(`[${vault.chain}] ❌ RPC connection failed:`, error.message);
-      console.error(`[${vault.chain}] Current RPC URL: ${vault.rpcUrls[0]}`);
+      console.error(`[${vault.chain}] RPC connection failed:`, error.message);
       throw new Error(`Failed to connect to ${vault.chain} RPC: ${error.message}`);
     }
   }
 
+  const initializedChains = new Set();
   for (const vault of VAULTS_CONFIG) {
+    if (initializedChains.has(vault.chain)) continue;
+    initializedChains.add(vault.chain);
     const metaKey = `lastProcessedBlock_${vault.chain}`;
     const meta = await colMeta.findOne({ _id: metaKey });
     const client = getClientForVault(vault);
-    
+
     try {
       const latestBlock = await client.getBlockNumber();
       if (meta?.value) {
         const savedBlock = BigInt(meta.value);
-        // If the gap is greater than 100 blocks, skip ahead to avoid processing a huge backlog on restart
         if (latestBlock - savedBlock > 100n) {
           lastProcessedBlocks[vault.chain] = latestBlock - 100n;
           console.log(`[${vault.chain}] Gap too large (${latestBlock - savedBlock} blocks), skipping ahead to ${lastProcessedBlocks[vault.chain]}`);
@@ -1054,93 +1061,64 @@ async function startIndexing() {
     }
   }
 
+  const vaultsByChain = {};
+  for (const vault of VAULTS_CONFIG) {
+    if (!vaultsByChain[vault.chain]) vaultsByChain[vault.chain] = [];
+    vaultsByChain[vault.chain].push(vault);
+  }
+
   setInterval(async () => {
     try {
-      const indexingPromises = VAULTS_CONFIG.map(async (vault) => {
+      const chainPromises = Object.entries(vaultsByChain).map(async ([chain, chainVaults]) => {
         try {
-          const client = getClientForVault(vault);
+          const client = clients[chain];
+          if (!client) return;
+
           const latestBlock = await client.getBlockNumber();
-          const SAFETY_MARGIN = vault.safetyMargin || BigInt(process.env[`${vault.chain.toUpperCase()}_SAFETY_MARGIN`] || '5');
-          const safeBlock = latestBlock > SAFETY_MARGIN ? latestBlock - SAFETY_MARGIN : latestBlock;
-          const fromBlock = lastProcessedBlocks[vault.chain] + 1n;
+          const maxSafetyMargin = chainVaults.reduce((max, v) => {
+            const margin = v.safetyMargin || BigInt(process.env[`${v.chain.toUpperCase()}_SAFETY_MARGIN`] || '5');
+            return margin > max ? margin : max;
+          }, 0n);
+          const safeBlock = latestBlock > maxSafetyMargin ? latestBlock - maxSafetyMargin : latestBlock;
+          const fromBlock = (lastProcessedBlocks[chain] || 0n) + 1n;
           const toBlock = safeBlock;
 
-          if (fromBlock <= toBlock) {
-            console.log(`[${vault.id}] Indexing blocks ${fromBlock} to ${toBlock} (latest: ${latestBlock}, safe: ${safeBlock})`);
-            
-            try {
-              if (vault.depositRouter) {
-                await indexDepositRouterEventsForVault(
-                  vault,
-                  client,
-                  colIntents,
-                  colDeposits,
-                  fromBlock,
-                  toBlock
-                );
-              }
-              await indexVaultEventsForVault(
-                vault,
-                client,
-                colDeposits,
-                colWithdrawals,
-                colPendingYieldoWithdrawals,
-                colIntents,
-                colMeta,
-                fromBlock,
-                toBlock
-              );
-              
-              lastProcessedBlocks[vault.chain] = toBlock;
-              const metaKey = `lastProcessedBlock_${vault.chain}`;
-              await colMeta.updateOne(
-                { _id: metaKey },
-                { $set: { value: lastProcessedBlocks[vault.chain].toString(), updated_at: new Date() } },
-                { upsert: true }
-              );
-            } catch (indexError) {
-              if (indexError.name === 'BlockNotFinalizedError' || 
-                  (indexError.message && (
-                    indexError.message.includes('after last accepted block') || 
-                    indexError.message.includes('requested from block') ||
-                    indexError.message.includes('not yet finalized')
-                  ))) {
-                return;
-              }
-              console.error(`[${vault.id}] Indexing error:`, indexError);
-              if (indexError.message) {
-                console.error(`[${vault.id}] Error message: ${indexError.message}`);
-              }
-              if (indexError.code) {
-                console.error(`[${vault.id}] Error code: ${indexError.code}`);
-              }
-              if (indexError.shortMessage) {
-                console.error(`[${vault.id}] Short message: ${indexError.shortMessage}`);
-              }
-              if (indexError.message && indexError.message.includes('eth_getLogs')) {
-                console.error(`[${vault.id}] CRITICAL: RPC does not support eth_getLogs. Current RPC: ${vault.rpcUrls[0]}`);
-                console.error(`[${vault.id}] Please check ETHEREUM_RPC_URL environment variable on Railway`);
-              }
-              throw indexError;
+          if (fromBlock > toBlock) return;
+
+          console.log(`[${chain}] Indexing ${chainVaults.length} vaults, blocks ${fromBlock}-${toBlock} (latest: ${latestBlock})`);
+
+          try {
+            const collections = { colIntents, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colMeta };
+            await indexDepositRouterEventsForChain(chainVaults, client, collections, fromBlock, toBlock);
+            await indexVaultEventsForChain(chainVaults, client, collections, fromBlock, toBlock);
+
+            lastProcessedBlocks[chain] = toBlock;
+            const metaKey = `lastProcessedBlock_${chain}`;
+            await colMeta.updateOne(
+              { _id: metaKey },
+              { $set: { value: toBlock.toString(), updated_at: new Date() } },
+              { upsert: true }
+            );
+          } catch (indexError) {
+            if (indexError.name === 'BlockNotFinalizedError' ||
+                (indexError.message && (
+                  indexError.message.includes('after last accepted block') ||
+                  indexError.message.includes('requested from block') ||
+                  indexError.message.includes('not yet finalized')
+                ))) {
+              return;
+            }
+            console.error(`[${chain}] Indexing error:`, indexError.message || indexError);
+            if (indexError.message && indexError.message.includes('eth_getLogs')) {
+              console.error(`[${chain}] CRITICAL: RPC does not support eth_getLogs. Current RPC: ${chainVaults[0]?.rpcUrls[0]}`);
             }
           }
         } catch (error) {
-          console.error(`[${vault.id}] Error in indexing loop:`, error);
-          if (error.message) {
-            console.error(`[${vault.id}] Error message: ${error.message}`);
-          }
-          if (error.code) {
-            console.error(`[${vault.id}] Error code: ${error.code}`);
-          }
-          if (error.cause) {
-            console.error(`[${vault.id}] Error cause:`, error.cause);
-          }
-          const client = getClientForVault(vault);
-          console.error(`[${vault.id}] Using RPC: ${vault.rpcUrls[0]} for chain ${vault.chain}`);
+          console.error(`[${chain}] Error in indexing loop:`, error.message || error);
         }
       });
 
-      await Promise.allSettled(indexingPromises);
+      await Promise.allSettled(chainPromises);
 
     } catch (error) {
       console.error('Error in indexing loop:', error);
@@ -1884,7 +1862,7 @@ app.post('/api/withdrawals/backfill-tx', async (req, res) => {
     if (!txHash) {
       return res.status(400).json({ error: 'txHash is required' });
     }
-    const chainsToTry = chain ? [chain] : ['avalanche', 'ethereum'];
+    const chainsToTry = chain ? [chain] : [...new Set(VAULTS_CONFIG.map(v => v.chain))];
     for (const c of chainsToTry) {
       const client = clients[c];
       if (!client) continue;

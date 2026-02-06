@@ -978,3 +978,29 @@ export async function indexVaultEventsForVault(
   }
 }
 
+export async function indexDepositRouterEventsForChain(vaults, client, collections, fromBlock, toBlock) {
+  const { colIntents, colDeposits } = collections;
+  for (const vault of vaults) {
+    if (!vault.depositRouter) continue;
+    try {
+      await indexDepositRouterEventsForVault(vault, client, colIntents, colDeposits, fromBlock, toBlock);
+    } catch (error) {
+      if (error.name === 'BlockNotFinalizedError') throw error;
+      console.error(`[${vault.id}] Error in batch deposit router indexing:`, error.message);
+    }
+  }
+}
+
+export async function indexVaultEventsForChain(vaults, client, collections, fromBlock, toBlock) {
+  const { colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colMeta } = collections;
+  const colIntents = collections.colIntents;
+  for (const vault of vaults) {
+    try {
+      await indexVaultEventsForVault(vault, client, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colIntents, colMeta, fromBlock, toBlock);
+    } catch (error) {
+      if (error.name === 'BlockNotFinalizedError') throw error;
+      console.error(`[${vault.id}] Error in batch vault event indexing:`, error.message);
+    }
+  }
+}
+
