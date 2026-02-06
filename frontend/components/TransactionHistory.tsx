@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Address, formatUnits } from 'viem'
 import { useAccount } from 'wagmi'
+import { getVaultById } from '@/lib/vaults-config'
 
 interface Transaction {
   transaction_id: string
@@ -55,9 +56,13 @@ const getChainName = (chain: string): string => {
 }
 
 const formatAmount = (amount: string, symbol: string): string => {
-  const decimals = ['ETH', 'AVAX', 'BNB', 'MATIC'].includes(symbol) ? 18 : 6
+  const decimals = ['ETH', 'AVAX', 'BNB', 'MATIC'].includes(symbol) || symbol.toLowerCase().includes('share') ? 18 : 6
   try {
-    return parseFloat(formatUnits(BigInt(amount), decimals)).toFixed(6)
+    const formatted = parseFloat(formatUnits(BigInt(amount), decimals))
+    if (symbol.toLowerCase().includes('share')) {
+      return formatted.toLocaleString(undefined, { maximumFractionDigits: 4 })
+    }
+    return formatted.toFixed(6)
   } catch {
     return amount
   }
@@ -202,25 +207,47 @@ export function TransactionHistory() {
                 No {filter === 'all' ? '' : filter} transactions found
               </div>
             ) : (
-              filteredTransactions.map((tx) => (
+              filteredTransactions.map((tx) => {
+                const vault = tx.vault_id ? getVaultById(tx.vault_id) : null
+                const vaultName = vault?.name || tx.vault_id || 'Unknown Vault'
+                const sharesReceived = tx.to_amount ? formatAmount(tx.to_amount, tx.to_token_symbol || 'shares') : null
+                
+                return (
                 <div key={tx.transaction_id} className="px-5 py-3 hover:bg-gray-50 transition-colors">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${getStatusColor(tx.status)}`}>
-                          {getStatusIcon(tx.status)} {tx.status}
-                        </span>
-                        <span className="text-sm font-semibold text-gray-900">
-                          {formatAmount(tx.from_amount, tx.from_token_symbol)} {tx.from_token_symbol}
-                        </span>
-                        <span className="text-gray-300">→</span>
-                        <span className="text-sm font-semibold text-gray-900">
-                          {tx.to_token_symbol}
-                        </span>
+                      <div className="mb-2">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className={`px-2 py-0.5 rounded-lg text-xs font-medium ${getStatusColor(tx.status)}`}>
+                            {getStatusIcon(tx.status)} {tx.status}
+                          </span>
+                          <span className="text-sm font-bold text-gray-900">
+                            {vaultName}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500 mb-1">
+                          {getChainName(tx.destination_chain)} • {tx.vault_address ? `${tx.vault_address.slice(0, 6)}...${tx.vault_address.slice(-4)}` : ''}
+                        </div>
                       </div>
 
-                      <div className="text-xs text-gray-400 mb-2">
-                        {getChainName(tx.source_chain)} → {getChainName(tx.destination_chain)}
+                      <div className="bg-gray-50 rounded-lg p-2 mb-2 space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Deposited:</span>
+                          <span className="font-semibold text-gray-900">
+                            {formatAmount(tx.from_amount, tx.from_token_symbol)} {tx.from_token_symbol}
+                          </span>
+                        </div>
+                        {tx.status === 'completed' && sharesReceived && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-600">Shares Received:</span>
+                            <span className="font-semibold text-green-700">
+                              {sharesReceived} {tx.to_token_symbol || 'shares'}
+                            </span>
+                          </div>
+                        )}
+                        <div className="text-xs text-gray-400 pt-1 border-t border-gray-200">
+                          {getChainName(tx.source_chain)} → {getChainName(tx.destination_chain)}
+                        </div>
                       </div>
                       
                       <div className="flex flex-wrap gap-2 text-xs">
@@ -296,7 +323,8 @@ export function TransactionHistory() {
                     </div>
                   </div>
                 </div>
-              ))
+                )
+              })
             )}
           </div>
         </>
