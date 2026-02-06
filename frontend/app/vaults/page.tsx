@@ -2334,13 +2334,19 @@ function VaultsPageContent() {
                     <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-4 text-center">
                       <p className="text-xs text-gray-600 mb-1">Fees</p>
                       <p className="text-xl font-bold text-gray-900">
-                        {typeof vaultRating.metrics.performanceFee === 'number' && typeof vaultRating.metrics.managementFee === 'number' 
-                          ? `${(vaultRating.metrics.performanceFee * 100).toFixed(1)}% / ${(vaultRating.metrics.managementFee * 100).toFixed(1)}%`
-                          : typeof vaultRating.metrics.performanceFee === 'number'
-                          ? `${(vaultRating.metrics.performanceFee * 100).toFixed(1)}%`
-                          : typeof vaultRating.metrics.managementFee === 'number'
-                          ? `${(vaultRating.metrics.managementFee * 100).toFixed(1)}%`
-                          : '—'}
+                        {(() => {
+                          const isLagoon = selectedVault.type === 'lagoon'
+                          const formatFee = (fee: number) => isLagoon ? (fee / 100).toFixed(2) : (fee * 100).toFixed(2)
+                          
+                          if (typeof vaultRating.metrics.performanceFee === 'number' && typeof vaultRating.metrics.managementFee === 'number') {
+                            return `${formatFee(vaultRating.metrics.performanceFee)}% / ${formatFee(vaultRating.metrics.managementFee)}%`
+                          } else if (typeof vaultRating.metrics.performanceFee === 'number') {
+                            return `${formatFee(vaultRating.metrics.performanceFee)}%`
+                          } else if (typeof vaultRating.metrics.managementFee === 'number') {
+                            return `${formatFee(vaultRating.metrics.managementFee)}%`
+                          }
+                          return '—'
+                        })()}
                       </p>
                       <p className="text-xs text-gray-500 mt-1">Perf / Mgmt</p>
                     </div>
