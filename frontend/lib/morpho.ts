@@ -107,13 +107,13 @@ export interface MorphoUserPosition {
 function getRpcUrl(chainId: number): string {
   switch (chainId) {
     case 1:
-      return process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://eth.llamarpc.com'
+      return process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://ethereum-rpc.publicnode.com'
     case 8453:
       return process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://base.meowrpc.com'
     case 42161:
       return process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc'
     default:
-      return 'https://eth.llamarpc.com'
+      return 'https://ethereum-rpc.publicnode.com'
   }
 }
 

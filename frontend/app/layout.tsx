@@ -3,8 +3,8 @@ import './globals.css'
 import { Providers } from './providers'
 
 export const metadata: Metadata = {
-  title: 'Yieldo - Lagoon Vault Integration',
-  description: 'E2E Deposit Attribution + Deterministic Snapshot Pipeline',
+  title: 'Yieldo - Find the Best Yield Vaults',
+  description: 'We curate top vaults across protocols so you can deposit with confidence from any chain',
 }
 
 export default function RootLayout({

@@ -180,7 +180,107 @@ export function compositeScoreLagoon(metrics, userAnalytics = null) {
     if (perf != null) { total += perf * w.performance; div += w.performance; }
     if (risk != null) { total += risk * w.risk; div += w.risk; }
   }
-  
+
+  if (div === 0) return null;
+  return Math.round((total / div) * 100) / 100;
+}
+
+export function capitalScoreMorpho(metrics) {
+  const tvlUsd = metrics.tvlUsd;
+  if (tvlUsd == null || tvlUsd <= 0) return null;
+
+  let tvlScore;
+  if (tvlUsd >= 50_000_000) tvlScore = 100;
+  else if (tvlUsd >= 10_000_000) tvlScore = 80 + ((tvlUsd - 10_000_000) / 40_000_000) * 20;
+  else if (tvlUsd >= 1_000_000) tvlScore = 50 + ((tvlUsd - 1_000_000) / 9_000_000) * 30;
+  else tvlScore = (tvlUsd / 1_000_000) * 50;
+
+  let depositorBonus = 0;
+  if (metrics.positionCount != null) {
+    depositorBonus = Math.min(10, metrics.positionCount / 10);
+  }
+
+  return Math.min(100, Math.max(0, tvlScore + depositorBonus));
+}
+
+export function performanceScoreMorpho(metrics) {
+  const parts = [];
+
+  if (metrics.dailyApy != null && !isNaN(metrics.dailyApy)) {
+    const apyPct = metrics.dailyApy * 100;
+    parts.push({ score: 20 + Math.min(80, apyPct * 4), weight: 0.2 });
+  }
+
+  if (metrics.weeklyApy != null && !isNaN(metrics.weeklyApy)) {
+    const apyPct = metrics.weeklyApy * 100;
+    parts.push({ score: 20 + Math.min(80, apyPct * 4), weight: 0.25 });
+  }
+
+  if (metrics.monthlyApy != null && !isNaN(metrics.monthlyApy)) {
+    const apyPct = metrics.monthlyApy * 100;
+    parts.push({ score: 20 + Math.min(80, apyPct * 4), weight: 0.25 });
+  }
+
+  if (parts.length === 0 && metrics.netApy != null && !isNaN(metrics.netApy)) {
+    const apyPct = metrics.netApy * 100;
+    parts.push({ score: 20 + Math.min(80, apyPct * 4), weight: 0.5 });
+  } else if (metrics.netApy != null && !isNaN(metrics.netApy)) {
+    const apyPct = metrics.netApy * 100;
+    parts.push({ score: 20 + Math.min(80, apyPct * 4), weight: 0.3 });
+  }
+
+  if (metrics.totalRewardsApr != null && metrics.totalRewardsApr > 0) {
+    const rewardPct = metrics.totalRewardsApr * 100;
+    parts.push({ score: Math.min(100, 40 + rewardPct * 4), weight: 0.1 });
+  }
+
+  if (parts.length === 0) return null;
+  const totalWeight = parts.reduce((sum, p) => sum + p.weight, 0);
+  const weightedSum = parts.reduce((sum, p) => sum + p.score * p.weight, 0);
+  return Math.min(100, Math.max(0, weightedSum / totalWeight));
+}
+
+export function riskScoreMorpho(metrics) {
+  let score = 100;
+
+  if (metrics.assetDepeg === true) score -= 40;
+
+  if (metrics.performanceFee != null && metrics.performanceFee > 0.15) score -= 10;
+  if (metrics.managementFee != null && metrics.managementFee > 0.02) score -= 5;
+
+  const totalFee = (metrics.performanceFee || 0) + (metrics.managementFee || 0);
+  if (totalFee > 0.25) score -= 10;
+
+  if (metrics.idleRatio != null && metrics.idleRatio > 0.2) score -= 10;
+
+  if (metrics.liquidityRatio != null && metrics.liquidityRatio < 0.05) score -= 10;
+
+  if (metrics.capUtilization != null && metrics.capUtilization > 0.95) score -= 5;
+
+  if (metrics.warningCount > 0) score -= metrics.warningCount * 5;
+
+  if (!metrics.listed) score -= 10;
+
+  if (!metrics.curator) score -= 5;
+
+  if (!metrics.guardian) score -= 3;
+
+  if (metrics.timelock != null && Number(metrics.timelock) === 0) score -= 3;
+
+  return Math.max(0, score);
+}
+
+export function compositeScoreMorpho(metrics) {
+  const cap = capitalScoreMorpho(metrics);
+  const perf = performanceScoreMorpho(metrics);
+  const risk = riskScoreMorpho(metrics);
+
+  const w = DEFAULT_WEIGHTS;
+  let total = 0;
+  let div = 0;
+  if (cap != null) { total += cap * w.capital; div += w.capital; }
+  if (perf != null) { total += perf * w.performance; div += w.performance; }
+  if (risk != null) { total += risk * w.risk; div += w.risk; }
   if (div === 0) return null;
   return Math.round((total / div) * 100) / 100;
 }

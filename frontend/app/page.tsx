@@ -36,14 +36,22 @@ export default function Home() {
 
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="text-center mb-16">
-          <h2 className="text-5xl font-bold mb-4">Lagoon Vault Integration</h2>
-          <p className="text-xl text-gray-700">E2E Deposit Attribution + Deterministic Snapshot Pipeline</p>
+          <h2 className="text-5xl font-bold mb-4">Find the Best Yield Vaults</h2>
+          <p className="text-xl text-gray-700 mb-4">We curate top vaults across protocols so you can deposit with confidence from any chain</p>
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-full border border-gray-200">
+            <span className="text-xs text-gray-600">Cross-chain deposits powered by</span>
+            <img src="/lifi.png" alt="LI.FI" className="h-4" />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-          <Link href="/vaults" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors">
+          <Link href="/vaults" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors relative">
             <h3 className="text-2xl font-bold mb-4">Vaults</h3>
-            <p className="text-gray-700">Deposit any token from any chain into yield vaults</p>
+            <p className="text-gray-700 mb-3">Deposit any token from any chain into yield vaults</p>
+            <div className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span>Cross-chain deposits powered by</span>
+              <img src="/lifi.png" alt="LI.FI" className="h-3.5" />
+            </div>
           </Link>
 
           <Link href="/dashboard" className="border-2 border-black p-8 hover:bg-black hover:text-white transition-colors">
@@ -83,7 +91,7 @@ export default function Home() {
                     )}
                   </div>
                   <p className="font-semibold text-lg mb-2 pr-28">{vault.name}</p>
-                  <p className="text-sm text-gray-600 mb-2">Lagoon Vault on {vault.chain.charAt(0).toUpperCase() + vault.chain.slice(1)}</p>
+                  <p className="text-sm text-gray-600 mb-2">{vault.type === 'lagoon' ? 'Lagoon' : vault.type?.startsWith('morpho') ? 'Morpho' : 'Yield'} Vault on {vault.chain.charAt(0).toUpperCase() + vault.chain.slice(1)}</p>
                   <p className="text-xs text-gray-500 break-all mb-2">
                     Address: {vault.address}
                   </p>

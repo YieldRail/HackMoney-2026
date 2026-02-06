@@ -67,6 +67,47 @@ export interface VaultRatingMetrics {
   hasIncentives?: boolean
   logoUrl?: string
   userAnalytics?: UserAnalytics | null
+  apy?: number | null
+  netApy?: number | null
+  netApyWithoutRewards?: number | null
+  avgApy?: number | null
+  avgNetApy?: number | null
+  dailyApy?: number | null
+  weeklyApy?: number | null
+  monthlyApy?: number | null
+  maxApy?: number | null
+  sharePrice?: number | null
+  sharePriceUsd?: number | null
+  lastTotalAssets?: string | null
+  listed?: boolean
+  featured?: boolean
+  curator?: string | null
+  owner?: string | null
+  guardian?: string | null
+  feeRecipient?: string | null
+  timelock?: string | null
+  creationTimestamp?: string | null
+  idleAssets?: string | null
+  idleAssetsUsd?: number | null
+  idleRatio?: number | null
+  liquidity?: string | null
+  liquidityUsd?: number | null
+  liquidityRatio?: number | null
+  positionCount?: number | null
+  rewards?: Array<{ symbol?: string; apr?: number; yearlyTokens?: string }> | null
+  totalRewardsApr?: number | null
+  allocationCount?: number | null
+  activeMarkets?: number | null
+  totalSuppliedUsd?: number | null
+  totalCapUsd?: number | null
+  capUtilization?: number | null
+  warningCount?: number | null
+  warnings?: Array<{ type?: string; level?: string }> | null
+  description?: string | null
+  curatorInfo?: { name?: string; image?: string; url?: string; verified?: boolean } | null
+  morphoName?: string
+  morphoSymbol?: string
+  source?: string
 }
 
 export interface VaultRatingScoreBreakdown {
@@ -81,6 +122,7 @@ export interface VaultRating {
   vault_name?: string
   vault_address?: string
   chain?: string
+  vault_type?: 'lagoon' | 'morpho'
   asset_symbol?: string
   metrics: VaultRatingMetrics
   score?: number | null

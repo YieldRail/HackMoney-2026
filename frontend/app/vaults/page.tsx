@@ -24,6 +24,7 @@ import { PendingTransactions } from '@/components/PendingTransactions'
 import { TransactionHistory } from '@/components/TransactionHistory'
 import { WhaleWatcher } from '@/components/WhaleWatcher'
 import { VaultSelect } from '@/components/VaultSelect'
+import { getIndexerApiUrl, type VaultRating, type VaultRatingMetrics } from '@/lib/vault-ratings'
 
 const chainConfigs: Record<number, any> = {
   1: mainnet,
@@ -59,6 +60,8 @@ function VaultsPageContent() {
   const [vaultState, setVaultState] = useState<any>(null)
   const [morphoVaultData, setMorphoVaultData] = useState<MorphoVaultDisplayData | null>(null)
   const [loadingMorphoData, setLoadingMorphoData] = useState(false)
+  const [vaultRating, setVaultRating] = useState<VaultRating | null>(null)
+  const [loadingVaultRating, setLoadingVaultRating] = useState(false)
   const [vaultSharesPerAsset, setVaultSharesPerAsset] = useState<bigint>(BigInt(10 ** 30))
   const [executing, setExecuting] = useState(false)
   const [executionStatus, setExecutionStatus] = useState<string | null>(null)
@@ -84,7 +87,6 @@ function VaultsPageContent() {
     txHash?: string
   } | null>(null)
   const [vaultCapacityError, setVaultCapacityError] = useState<string | null>(null)
-  // Lock parameters when execution starts to prevent UI changes affecting the flow
   const [lockedParams, setLockedParams] = useState<{
     fromChainId: number
     fromToken: TokenInfo
@@ -117,18 +119,17 @@ function VaultsPageContent() {
   }, [contractNonce])
 
   useEffect(() => {
-    // Don't sync chain when executing - keep the original deposit chain
     if (chainId && !executing) setFromChainId(chainId)
   }, [chainId, executing])
 
   useEffect(() => {
     if (selectedVault) {
       fetchVaultState()
+      fetchVaultRating()
     }
   }, [selectedVault])
 
   useEffect(() => {
-    // Don't refetch tokens during execution
     if (!executing) fetchTokens()
   }, [fromChainId, executing])
 
@@ -140,7 +141,6 @@ function VaultsPageContent() {
 
   const fetchVaultState = async () => {
     if (!selectedVault) return
-    // Clear Morpho data and capacity errors when switching vaults
     setMorphoVaultData(null)
     setVaultCapacityError(null)
     try {
@@ -160,7 +160,6 @@ function VaultsPageContent() {
           }
         }
       } else if (selectedVault.type?.startsWith('morpho')) {
-        // Fetch rich data from Morpho API
         setLoadingMorphoData(true)
         try {
           const displayData = await fetchMorphoVaultDisplayData(
@@ -196,7 +195,6 @@ function VaultsPageContent() {
               setVaultSharesPerAsset(BigInt(10 ** 30))
             }
           } else {
-            // Fallback to on-chain data
             const morphoData = await fetchMorphoVaultData(selectedVault.address as Address, selectedVault.chainId)
             if (morphoData) {
               const totalAssets = morphoData.totalAssets || 0n
@@ -231,6 +229,37 @@ function VaultsPageContent() {
     }
   }
 
+  const fetchVaultRating = async () => {
+    if (!selectedVault) return
+    setLoadingVaultRating(true)
+    setVaultRating(null)
+    try {
+      const apiUrl = getIndexerApiUrl()
+      const url = selectedVault.chain
+        ? `${apiUrl}/api/vault-ratings?vault_id=${encodeURIComponent(selectedVault.id)}&chain=${encodeURIComponent(selectedVault.chain)}`
+        : `${apiUrl}/api/vault-ratings?vault_id=${encodeURIComponent(selectedVault.id)}`
+      
+      console.log('Fetching vault rating from:', url)
+      const response = await fetch(url)
+      if (response.ok) {
+        const data = await response.json()
+        console.log('Vault rating API response:', data)
+        if (Array.isArray(data) && data.length > 0) {
+          console.log('Setting vault rating:', data[0])
+          setVaultRating(data[0])
+        } else {
+          console.warn('Vault rating API returned empty array or no data')
+        }
+      } else {
+        console.error('Vault rating API error:', response.status, response.statusText)
+      }
+    } catch (error) {
+      console.error('Error fetching vault rating:', error)
+    } finally {
+      setLoadingVaultRating(false)
+    }
+  }
+
   const fetchTokens = async () => {
     setLoadingTokens(true)
     const tokens = await getTokensForChain(fromChainId)
@@ -247,7 +276,6 @@ function VaultsPageContent() {
       setQuote(null)
       return
     }
-    // Clear previous transaction success/error states when fetching new quote
     setShowSuccess(false)
     setSuccessTxHashes({})
     setShowError(false)
@@ -263,7 +291,6 @@ function VaultsPageContent() {
         return
       }
 
-      // Check vault capacity for Morpho (ERC4626) vaults before fetching quote
       if (selectedVault.type?.startsWith('morpho')) {
         try {
           const vaultChainConfig = chainConfigs[selectedVault.chainId]
@@ -294,7 +321,6 @@ function VaultsPageContent() {
           }
         } catch (e) {
           console.warn('Could not check vault maxDeposit:', e)
-          // Continue with quote fetch - the vault deposit will fail on-chain if truly at cap
         }
       }
       const toTokenForSwap = selectedVault.asset.address as Address
@@ -333,7 +359,6 @@ function VaultsPageContent() {
           })
           
           if (tempQuote) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const q = tempQuote as any
             const toAmountStr = q.estimate?.toAmount || q.action?.toAmount || q.toAmount || '0'
             const toAmount = BigInt(toAmountStr)
@@ -569,7 +594,6 @@ function VaultsPageContent() {
         } catch (err) {
           console.warn('Failed to use stored intent, creating new one:', err)
           setExecutionStatus('Please sign the deposit intent...')
-          // Fetch fresh nonce to avoid "Invalid nonce" errors
           let freshNonce = userNonce
           try {
             const nonceResult = await publicClient?.readContract({
@@ -660,7 +684,6 @@ function VaultsPageContent() {
       setExecutionStep('complete')
       setExecutionStatus('🎉 Deposit completed successfully!')
 
-      // Save tx hashes for success display before clearing
       setSuccessTxHashes({
         bridge: bridgeTxHash,
         deposit: depositHash,
@@ -672,7 +695,6 @@ function VaultsPageContent() {
 
       localStorage.removeItem(`pending_deposit_${txId}`)
 
-      // Clear form but keep success message visible
       setAmount('')
       setQuote(null)
       setTransactionId(null)
@@ -779,11 +801,6 @@ function VaultsPageContent() {
       56: 'bsc',
     }
     const sourceChainKey = chainIdToKey[capturedFromChainId] || fromChain?.name.toLowerCase() || 'unknown'
-    // IMPORTANT: Use toAmountMin (minimum after slippage) for intent signing
-    // This ensures the signed amount matches what the bridge will actually deliver
-    // For cross-chain, add extra 5% buffer for cumulative slippage across swap + bridge + contract call
-    // This is on top of LI.FI's built-in slippage (usually 3%)
-    // Note: Any excess tokens beyond intent amount go to user's wallet as fallback
     const isCrossChain = capturedFromChainId !== capturedVault.chainId
     const baseAmount = capturedQuote.toAmountMin || (capturedQuote.estimatedAssets + capturedQuote.feeAmount)
     const crossChainSlippageBuffer = isCrossChain ? 0.95 : 1.0 // 5% extra buffer for cross-chain
@@ -838,8 +855,6 @@ function VaultsPageContent() {
 
       setExecutionStatus('Step 1/3: Signing deposit intent...')
 
-      // CRITICAL: Fetch fresh nonce from destination chain before signing
-      // This prevents "Invalid nonce" errors when the cached nonce is stale
       const destChainConfig = chainConfigs[capturedVault.chainId]
       const destPublicClient = createPublicClient({
         chain: destChainConfig,
@@ -930,7 +945,6 @@ function VaultsPageContent() {
       
       const toTokenForContractCall = capturedVault.asset.address as Address
       
-      // Use higher slippage (5%) for cross-chain contract calls due to multi-hop complexity
       const crossChainSlippage = 0.05
 
       let quoteWithCall = await getQuoteWithContractCall(
@@ -984,11 +998,9 @@ function VaultsPageContent() {
             transport: http(),
           })
 
-          // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
           const quoteFromAmount = capturedQuote.quote?.action?.fromAmount
             ? BigInt(capturedQuote.quote.action.fromAmount)
             : parsedFromAmount
-          // Add 1% buffer to be safe
           const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
 
           const allowance = await sourcePublicClient.readContract({
@@ -1171,12 +1183,9 @@ function VaultsPageContent() {
       if (!isNative) {
         console.log('Token is not native, checking allowance on source chain:', capturedFromChainId)
 
-        // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
-        // LI.FI may need slightly more due to swap fees, slippage, etc.
         const quoteFromAmount = quoteWithCall.action?.fromAmount
           ? BigInt(quoteWithCall.action.fromAmount)
           : parsedFromAmount
-        // Add 1% buffer to be safe
         const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
 
         console.log('Approval amounts:', {
@@ -1234,7 +1243,6 @@ function VaultsPageContent() {
       setExecutionStatus('Confirmed! Bridging and depositing into vault...')
       await updateTransactionState('pending', 'depositing', undefined, { txHash: bridgeHash, status: 'CONFIRMED' }, bridgeHash)
 
-      // Use intent.nonce since we may have fetched fresh nonce
       setUserNonce(intent.nonce + BigInt(1))
 
       const bridge = getBridgeFromQuote(quoteWithCall)
@@ -1278,7 +1286,6 @@ function VaultsPageContent() {
               setExecutionStatus('🎉 Cross-chain deposit completed! Shares issued to your wallet.')
               await updateTransactionState('completed', 'completed', undefined, status, bridgeHash!)
 
-              // Save tx hashes for success display
               setSuccessTxHashes({
                 bridge: bridgeHash || txHashes.bridge,
                 deposit: txHashes.deposit,
@@ -1360,7 +1367,6 @@ function VaultsPageContent() {
     const apiUrl = process.env.NEXT_PUBLIC_INDEXER_API_URL || 'http://localhost:3001'
     const sourceChainKey = SUPPORTED_CHAINS.find(c => c.id === fromChainId)?.name?.toLowerCase() || 'unknown'
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updateTransactionState = async (status: string, currentStep: string, errorMessage?: string, lifiStatusData?: any, bridgeTxHash?: string) => {
       try {
         await fetch(`${apiUrl}/api/transaction-states`, {
@@ -1434,11 +1440,9 @@ function VaultsPageContent() {
       }
 
       if (!isNative) {
-        // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
         const quoteFromAmount = quote.quote?.action?.fromAmount
           ? BigInt(quote.quote.action.fromAmount)
           : fromAmount
-        // Add 1% buffer to be safe
         const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
 
         const allowance = await publicClient?.readContract({
@@ -1480,18 +1484,14 @@ function VaultsPageContent() {
         deadline,
       }
 
-      // Skip contract calls for Lagoon vaults - LI.FI composer doesn't properly support custom syncDeposit
-      // Only use contract calls for ERC4626 vaults (Morpho) which LI.FI has better support for
       const isERC4626 = selectedVault.type?.startsWith('morpho')
       const isLagoon = selectedVault.type === 'lagoon'
       
-      // Sign intent early - needed for both contract call and two-step flows
       setExecutionStatus('Step 1/2: Please sign the deposit intent...')
       setExecutionStep('idle')
       const signature = await signDepositIntent(intent, chainId, depositRouterAddress, walletClient)
       console.log('Deposit intent signed:', { intent, signature })
       
-      // Determine function name based on vault type
       const functionName = selectedVault.hasSettlement
         ? 'depositWithIntentCrossChainRequest'
         : (isERC4626 ? 'depositWithIntentCrossChainERC4626' : 'depositWithIntentCrossChain')
@@ -1545,7 +1545,6 @@ function VaultsPageContent() {
         console.log('Using two-step process (bridge + deposit) instead')
       }
       
-      // Contract call flow (only for non-Lagoon vaults when quote succeeds)
       if (useContractCall && freshQuote) {
         console.log('=== FRESH QUOTE RECEIVED ===')
         console.log('Quote transactionRequest.to:', freshQuote.transactionRequest.to)
@@ -1581,8 +1580,6 @@ function VaultsPageContent() {
         const eip1559Chains = [1, 8453, 10, 42161]
         const isEip1559Chain = eip1559Chains.includes(fromChainId)
       
-      // Two-step process: Bridge first, then deposit separately
-      // Used for Lagoon vaults and when contract calls fail or aren't available
       if (!useContractCall) {
         if (isLagoon) {
           setExecutionStatus('⚠️ Lagoon vault: Using two-step process (bridge + deposit)')
@@ -1614,12 +1611,10 @@ function VaultsPageContent() {
               transport: http(),
             })
 
-            // Use the quote's fromAmount (what LI.FI actually needs) instead of user input
             const parsedFromAmount = parseUnits(amount, fromToken.decimals)
             const quoteFromAmount = regularQuote.action?.fromAmount
               ? BigInt(regularQuote.action.fromAmount)
               : parsedFromAmount
-            // Add 1% buffer to be safe
             const approvalAmount = quoteFromAmount + (quoteFromAmount / 100n)
 
             const allowance = await sourcePublicClient.readContract({
@@ -1792,7 +1787,6 @@ function VaultsPageContent() {
           setExecutionStep('complete')
           await updateTransactionState('completed', 'completed', undefined, undefined, depositHash)
 
-          // Save tx hashes for success display
           setSuccessTxHashes({
             bridge: txHashes.bridge,
             deposit: depositHash,
@@ -1942,7 +1936,6 @@ function VaultsPageContent() {
       setExecutionStep('idle')
       setExecutionStatus(null)
 
-      // Show persistent error with tx hash
       setErrorInfo({
         message: errorMessage,
         txHash: txHashes.swap || txHashes.bridge || txHashes.deposit,
@@ -2061,7 +2054,6 @@ function VaultsPageContent() {
         }
       }
 
-      // Use ERC4626 functions for Morpho vaults
       const isERC4626 = selectedVault.type?.startsWith('morpho')
       const functionName = selectedVault.hasSettlement
         ? 'depositWithIntentRequest'
@@ -2204,7 +2196,45 @@ function VaultsPageContent() {
             {/* Vault Stats - Horizontal */}
             <div className="flex-1 flex flex-wrap items-center gap-4 lg:gap-6 lg:pt-3">
               {/* Quick Stats */}
-              {selectedVault.type?.startsWith('morpho') && morphoVaultData ? (
+              {loadingVaultRating || (loadingMorphoData && selectedVault.type?.startsWith('morpho')) ? (
+                <div className="flex gap-3">
+                  {[1, 2].map(i => <div key={i} className="h-9 w-24 bg-gray-100 rounded-lg animate-pulse" />)}
+                </div>
+              ) : vaultRating?.metrics ? (
+                <>
+                  {typeof vaultRating.metrics.tvlUsd === 'number' && (
+                    <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                      <span className="text-xs text-gray-500">TVL</span>
+                      <span className="font-bold text-sm">
+                        ${(vaultRating.metrics.tvlUsd / 1e6).toFixed(2)}M
+                      </span>
+                    </div>
+                  )}
+                  {typeof vaultRating.metrics.netApy === 'number' ? (
+                    <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
+                      <span className="text-xs text-green-600">Net APY</span>
+                      <span className="font-bold text-sm text-green-700">
+                        {(vaultRating.metrics.netApy * 100).toFixed(2)}%
+                      </span>
+                    </div>
+                  ) : typeof vaultRating.metrics.apy === 'number' ? (
+                    <div className="flex items-center gap-2 bg-green-50 rounded-lg px-3 py-2">
+                      <span className="text-xs text-green-600">APY</span>
+                      <span className="font-bold text-sm text-green-700">
+                        {(vaultRating.metrics.apy * 100).toFixed(2)}%
+                      </span>
+                    </div>
+                  ) : null}
+                  {typeof vaultRating.metrics.sharePrice === 'number' && (
+                    <div className="flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-2">
+                      <span className="text-xs text-blue-600">Share Price</span>
+                      <span className="font-bold text-sm text-blue-700">
+                        {vaultRating.metrics.sharePrice.toFixed(4)}
+                      </span>
+                    </div>
+                  )}
+                </>
+              ) : selectedVault.type?.startsWith('morpho') && morphoVaultData ? (
                 <>
                   <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
                     <span className="text-xs text-gray-500">TVL</span>
@@ -2215,10 +2245,6 @@ function VaultsPageContent() {
                     <span className="font-bold text-sm text-green-700">{(morphoVaultData.netApy || 0).toFixed(2)}%</span>
                   </div>
                 </>
-              ) : loadingMorphoData && selectedVault.type?.startsWith('morpho') ? (
-                <div className="flex gap-3">
-                  {[1, 2].map(i => <div key={i} className="h-9 w-24 bg-gray-100 rounded-lg animate-pulse" />)}
-                </div>
               ) : (
                 <>
                   <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
@@ -2251,34 +2277,176 @@ function VaultsPageContent() {
             </div>
           </div>
 
-          {/* Morpho Extended Info - Collapsible */}
-          {selectedVault.type?.startsWith('morpho') && morphoVaultData && (
-            <details className="mt-4 pt-4 border-t border-gray-100">
+          {/* Comprehensive Vault Metrics - Collapsible */}
+          {selectedVault && (vaultRating?.metrics || morphoVaultData || loadingVaultRating) && (
+            <details className="mt-4 pt-4 border-t border-gray-100" open>
               <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors flex items-center gap-2">
-                <span className="text-purple-600">{morphoVaultData.name}</span>
+                <span className="text-purple-600">
+                  {vaultRating?.vault_name || morphoVaultData?.name || selectedVault.name}
+                </span>
                 <span className="text-gray-400">-</span>
-                <span>View Detailed Stats</span>
+                <span>View All Metrics</span>
+                {loadingVaultRating && (
+                  <span className="text-xs text-gray-400">(Loading...)</span>
+                )}
+                {vaultRating && !vaultRating.metrics && (
+                  <span className="text-xs text-yellow-600">(No metrics data)</span>
+                )}
               </summary>
-              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+              
+              {loadingVaultRating ? (
+                <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+                    <div key={i} className="h-20 bg-gray-100 rounded-xl animate-pulse" />
+                  ))}
+                </div>
+              ) : vaultRating?.metrics ? (
+                <div className="mt-4 space-y-4">
+                  {/* Key Metrics - Simplified */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {typeof vaultRating.metrics.tvlUsd === 'number' && (
+                      <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-4 text-center">
+                        <p className="text-xs text-gray-600 mb-1">TVL</p>
+                        <p className="text-xl font-bold text-gray-900">
+                          ${(vaultRating.metrics.tvlUsd / 1e6).toFixed(2)}M
+                        </p>
+                      </div>
+                    )}
+                    {typeof vaultRating.metrics.netApy === 'number' ? (
+                      <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 text-center">
+                        <p className="text-xs text-green-600 mb-1">Net APY</p>
+                        <p className="text-xl font-bold text-green-700">{(vaultRating.metrics.netApy * 100).toFixed(2)}%</p>
+                      </div>
+                    ) : typeof vaultRating.metrics.apy === 'number' && (
+                      <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 text-center">
+                        <p className="text-xs text-green-600 mb-1">APY</p>
+                        <p className="text-xl font-bold text-green-700">{(vaultRating.metrics.apy * 100).toFixed(2)}%</p>
+                      </div>
+                    )}
+                    {typeof vaultRating.metrics.sharePrice === 'number' && (
+                      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 text-center">
+                        <p className="text-xs text-blue-600 mb-1">Share Price</p>
+                        <p className="text-xl font-bold text-blue-700">
+                          {vaultRating.metrics.sharePrice.toFixed(4)}
+                        </p>
+                      </div>
+                    )}
+                    <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-4 text-center">
+                      <p className="text-xs text-gray-600 mb-1">Fees</p>
+                      <p className="text-xl font-bold text-gray-900">
+                        {typeof vaultRating.metrics.performanceFee === 'number' && typeof vaultRating.metrics.managementFee === 'number' 
+                          ? `${(vaultRating.metrics.performanceFee * 100).toFixed(1)}% / ${(vaultRating.metrics.managementFee * 100).toFixed(1)}%`
+                          : typeof vaultRating.metrics.performanceFee === 'number'
+                          ? `${(vaultRating.metrics.performanceFee * 100).toFixed(1)}%`
+                          : typeof vaultRating.metrics.managementFee === 'number'
+                          ? `${(vaultRating.metrics.managementFee * 100).toFixed(1)}%`
+                          : '—'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">Perf / Mgmt</p>
+                    </div>
+                  </div>
+
+                  {/* Vault Info */}
+                  {(vaultRating?.metrics?.curatorInfo || vaultRating?.metrics?.description) && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-gray-700 mb-3 uppercase tracking-wide">Vault Information</h4>
+                      <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-4 space-y-3">
+                        {vaultRating?.metrics?.curatorInfo && (
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-gray-600 font-medium">Curator:</span>
+                            <div className="flex items-center gap-2">
+                              {vaultRating.metrics.curatorInfo.image && (
+                                <img src={vaultRating.metrics.curatorInfo.image} alt="" className="w-6 h-6 rounded-full" />
+                              )}
+                              <span className="text-sm font-semibold text-gray-900">
+                                {vaultRating.metrics.curatorInfo.name}
+                              </span>
+                              {vaultRating.metrics.curatorInfo.verified && (
+                                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Verified</span>
+                              )}
+                            </div>
+                            {vaultRating.metrics.curatorInfo.url && (
+                              <a
+                                href={vaultRating.metrics.curatorInfo.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:underline"
+                              >
+                                Visit →
+                              </a>
+                            )}
+                          </div>
+                        )}
+                        {vaultRating?.metrics?.description && (
+                          <div>
+                            <p className="text-xs text-gray-600 font-medium mb-1">Description:</p>
+                            <p className="text-sm text-gray-700 leading-relaxed">
+                              {vaultRating.metrics.description}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* User Position (if connected) */}
+                  {morphoVaultData?.userShares && BigInt(morphoVaultData.userShares) > 0n && (
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
+                      <h4 className="text-xs font-semibold text-blue-700 mb-2">Your Position</h4>
+                      <div className="flex gap-6">
+                        <div>
+                          <p className="text-xs text-blue-500">Shares</p>
+                          <p className="font-bold text-blue-900">{(Number(morphoVaultData.userShares) / 10 ** 18).toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-blue-500">Value</p>
+                          <p className="font-bold text-blue-900">
+                            {morphoVaultData.userAssetsUsd ? `$${morphoVaultData.userAssetsUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` :
+                              `${(Number(morphoVaultData.userAssets || 0) / 10 ** morphoVaultData.assetDecimals).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${morphoVaultData.assetSymbol}`}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : morphoVaultData ? (
+                <div className="mt-4 space-y-4">
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center">
+                    <p className="text-sm text-yellow-800">
+                      Vault rating data not available. Showing basic metrics from Morpho API.
+                    </p>
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-semibold text-gray-700 mb-3 uppercase tracking-wide">Performance</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {morphoVaultData.dailyApy != null && (
                 <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-3 text-center">
                   <p className="text-xs text-green-600 mb-1">24h APY</p>
                   <p className="text-lg font-bold text-green-700">{(morphoVaultData.dailyApy || 0).toFixed(2)}%</p>
                 </div>
+                      )}
+                      {morphoVaultData.weeklyApy != null && (
                 <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-3 text-center">
                   <p className="text-xs text-green-600 mb-1">7d APY</p>
                   <p className="text-lg font-bold text-green-700">{(morphoVaultData.weeklyApy || 0).toFixed(2)}%</p>
                 </div>
+                      )}
+                      {morphoVaultData.monthlyApy != null && (
                 <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-3 text-center">
                   <p className="text-xs text-green-600 mb-1">30d APY</p>
                   <p className="text-lg font-bold text-green-700">{(morphoVaultData.monthlyApy || 0).toFixed(2)}%</p>
                 </div>
+                      )}
+                      {morphoVaultData.performanceFee != null && (
                 <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-3 text-center">
                   <p className="text-xs text-gray-500 mb-1">Fee</p>
                   <p className="text-lg font-bold text-gray-700">{(morphoVaultData.performanceFee || 0).toFixed(1)}%</p>
+                        </div>
+                      )}
                 </div>
               </div>
               {morphoVaultData.userShares && BigInt(morphoVaultData.userShares) > 0n && (
-                <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
                   <h4 className="text-xs font-semibold text-blue-700 mb-2">Your Position</h4>
                   <div className="flex gap-6">
                     <div>
@@ -2293,6 +2461,12 @@ function VaultsPageContent() {
                       </p>
                     </div>
                   </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-4 text-center py-8">
+                  <p className="text-gray-500">No vault metrics available. Please try refreshing the page.</p>
                 </div>
               )}
             </details>
@@ -2496,9 +2670,15 @@ function VaultsPageContent() {
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold text-lg">Quote Summary</h3>
                   {quote?.hasContractCall && (
+                    <div className="flex items-center gap-2">
                     <span className="text-xs bg-gradient-to-r from-green-100 to-emerald-100 text-green-700 px-3 py-1 rounded-full font-medium">
                       Auto-deposit
                     </span>
+                      <div className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 rounded-full border border-gray-200">
+                        <span className="text-xs text-gray-500">Powered by</span>
+                        <img src="/lifi.png" alt="LI.FI" className="h-3.5" />
+                      </div>
+                    </div>
                   )}
                 </div>
 

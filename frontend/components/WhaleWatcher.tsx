@@ -161,7 +161,7 @@ export function WhaleWatcher({
       async function resolveEns() {
         setEnsResolving(true)
         try {
-          const addresses = data.depositors.map(d => d.address as Address)
+          const addresses = data!.depositors.map(d => d.address as Address)
           const resolved = await batchResolveEnsNames(addresses)
           setEnsMap(resolved)
         } catch (err) {

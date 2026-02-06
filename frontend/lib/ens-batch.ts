@@ -3,10 +3,10 @@ import { mainnet } from 'viem/chains'
 
 const ensClient = createPublicClient({
   chain: mainnet,
-  transport: http(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://eth.llamarpc.com', {
+  transport: http(process.env.NEXT_PUBLIC_ETHEREUM_RPC_URL || 'https://ethereum-rpc.publicnode.com', {
     batch: {
-      wait: 0,
-      batchSize: 1000,
+      wait: 10,
+      batchSize: 50,
     },
   }),
 })
@@ -34,35 +34,34 @@ export async function batchResolveEnsNames(
     return result
   }
 
-  const CHUNK_SIZE = 50
+  const CHUNK_SIZE = 25
   const chunks: Address[][] = []
   for (let i = 0; i < addressesToResolve.length; i += CHUNK_SIZE) {
     chunks.push(addressesToResolve.slice(i, i + CHUNK_SIZE))
   }
 
-  await Promise.all(
-    chunks.map(async (chunk) => {
-      try {
-        const names = await Promise.all(
-          chunk.map(address =>
-            ensClient.getEnsName({ address }).catch(() => null)
-          )
+  // Process chunks sequentially to avoid exceeding RPC batch limits
+  for (const chunk of chunks) {
+    try {
+      const names = await Promise.all(
+        chunk.map(address =>
+          ensClient.getEnsName({ address }).catch(() => null)
         )
+      )
 
-        chunk.forEach((address, i) => {
-          const name = names[i]
-          const addressLower = address.toLowerCase()
-          result.set(addressLower, name)
-          ensCache.set(addressLower, { name, timestamp: now })
-        })
-      } catch (error) {
-        console.error('Error batch resolving ENS names for chunk:', error)
-        chunk.forEach(address => {
-          result.set(address.toLowerCase(), null)
-        })
-      }
-    })
-  )
+      chunk.forEach((address, i) => {
+        const name = names[i]
+        const addressLower = address.toLowerCase()
+        result.set(addressLower, name)
+        ensCache.set(addressLower, { name, timestamp: now })
+      })
+    } catch (error) {
+      console.error('Error batch resolving ENS names for chunk:', error)
+      chunk.forEach(address => {
+        result.set(address.toLowerCase(), null)
+      })
+    }
+  }
 
   return result
 }
