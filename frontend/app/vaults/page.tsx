@@ -97,6 +97,7 @@ function VaultsPageContent() {
   const [resolvedReferrer, setResolvedReferrer] = useState<Address | null>(null)
   const [referralError, setReferralError] = useState<string | null>(null)
   const [resolvingReferral, setResolvingReferral] = useState(false)
+  const [showVaultMetrics, setShowVaultMetrics] = useState(false)
 
   const { data: tokenBalance, refetch: refetchBalance } = useBalance({
     address,
@@ -131,6 +132,7 @@ function VaultsPageContent() {
     if (selectedVault) {
       fetchVaultState()
       fetchVaultRating()
+      setShowVaultMetrics(false)
     }
   }, [selectedVault])
 
@@ -2337,20 +2339,24 @@ function VaultsPageContent() {
 
           {/* Comprehensive Vault Metrics - Collapsible */}
           {selectedVault && (vaultRating?.metrics || morphoVaultData || loadingVaultRating) && (
-            <details className="mt-4 pt-4 border-t border-gray-100" open>
-              <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors flex items-center gap-2">
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <button
+                onClick={() => setShowVaultMetrics(!showVaultMetrics)}
+                className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors flex items-center gap-2"
+              >
                 <span className="text-purple-600">
                   {vaultRating?.vault_name || morphoVaultData?.name || selectedVault.name}
                 </span>
                 <span className="text-gray-400">-</span>
-                <span>View All Metrics</span>
+                <span>{showVaultMetrics ? 'Hide Vault Info' : 'View Vault Metrics'}</span>
                 {loadingVaultRating && (
                   <span className="text-xs text-gray-400">(Loading...)</span>
                 )}
                 {vaultRating && !vaultRating.metrics && (
                   <span className="text-xs text-yellow-600">(No metrics data)</span>
                 )}
-              </summary>
+              </button>
+              {showVaultMetrics && (<>
               
               {loadingVaultRating ? (
                 <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -2533,7 +2539,8 @@ function VaultsPageContent() {
                   <p className="text-gray-500">No vault metrics available. Please try refreshing the page.</p>
                 </div>
               )}
-            </details>
+            </>)}
+            </div>
           )}
         </div>
 
