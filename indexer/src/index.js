@@ -80,6 +80,7 @@ let colWithdrawals;
 let colSnapshots;
 let colMeta;
 let colPendingYieldoWithdrawals;
+let colReferralFees;
 let colVaultRatings;
 let colVaultRatingHistory;
 let colCrossChainDeposits;
@@ -237,6 +238,7 @@ async function initDatabase() {
   colSnapshots = db.collection('snapshots');
   colMeta = db.collection('meta');
   colPendingYieldoWithdrawals = db.collection('pending_yieldo_withdrawals');
+  colReferralFees = db.collection('referral_fees');
   colVaultRatings = db.collection('vault_ratings');
   colVaultRatingHistory = db.collection('vault_rating_history');
   colCrossChainDeposits = db.collection('cross_chain_deposits');
@@ -270,6 +272,9 @@ async function initDatabase() {
     colPendingYieldoWithdrawals.createIndex({ user_address: 1, created_at: -1 }),
     colPendingYieldoWithdrawals.createIndex({ transaction_hash: 1, chain: 1 }, { unique: true }),
     colPendingYieldoWithdrawals.createIndex({ created_at: 1 }, { expireAfterSeconds: 3600 }),
+    colReferralFees.createIndex({ referrer: 1, asset: 1 }),
+    colReferralFees.createIndex({ referrer: 1, created_at: -1 }),
+    colReferralFees.createIndex({ transaction_hash: 1, intent_hash: 1, chain: 1 }, { unique: true }),
     colCrossChainDeposits.createIndex({ deposit_tx_hash: 1, chain: 1 }, { unique: true }),
     colCrossChainDeposits.createIndex({ user_address: 1, created_at: -1 }),
     colCrossChainDeposits.createIndex({ source_chain: 1, destination_chain: 1 }),
@@ -1088,7 +1093,7 @@ async function startIndexing() {
           console.log(`[${chain}] Indexing ${chainVaults.length} vaults, blocks ${fromBlock}-${toBlock} (latest: ${latestBlock})`);
 
           try {
-            const collections = { colIntents, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colMeta };
+            const collections = { colIntents, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colMeta, colReferralFees };
             await indexDepositRouterEventsForChain(chainVaults, client, collections, fromBlock, toBlock);
             await indexVaultEventsForChain(chainVaults, client, collections, fromBlock, toBlock);
 
@@ -1320,6 +1325,63 @@ app.get('/api/withdrawals', async (req, res) => {
   }
 });
 
+app.get('/api/referral-earnings', async (req, res) => {
+  try {
+    const { address } = req.query;
+    if (!address) {
+      return res.status(400).json({ error: 'address query parameter is required' });
+    }
+
+    const pipeline = [
+      { $match: { referrer: { $regex: new RegExp(`^${address}$`, 'i') } } },
+      {
+        $group: {
+          _id: { asset: '$asset', asset_symbol: '$asset_symbol', asset_decimals: '$asset_decimals' },
+          total_earned: { $sum: { $toDecimal: '$fee_amount' } },
+          referral_count: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          asset: '$_id.asset',
+          asset_symbol: '$_id.asset_symbol',
+          asset_decimals: '$_id.asset_decimals',
+          total_earned: { $toString: '$total_earned' },
+          referral_count: '$referral_count',
+        },
+      },
+    ];
+
+    const earnings = await colReferralFees.aggregate(pipeline).toArray();
+
+    const recentReferrals = await colReferralFees
+      .find({ referrer: { $regex: new RegExp(`^${address}$`, 'i') } })
+      .sort({ created_at: -1 })
+      .limit(20)
+      .toArray();
+
+    res.json({
+      earnings,
+      recent: recentReferrals.map((r) => ({
+        intent_hash: r.intent_hash,
+        asset: r.asset,
+        asset_symbol: r.asset_symbol,
+        asset_decimals: r.asset_decimals,
+        fee_amount: r.fee_amount,
+        vault_id: r.vault_id,
+        vault_name: r.vault_name,
+        chain: r.chain,
+        txHash: r.transaction_hash,
+        timestamp: r.created_at?.toISOString?.() || null,
+      })),
+    });
+  } catch (error) {
+    console.error('Error fetching referral earnings:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/deposits/mark-yieldo', async (req, res) => {
   try {
     const { txHash, userAddress } = req.body;
@@ -1462,7 +1524,7 @@ app.post('/api/deposits/mark-yieldo-and-backfill', async (req, res) => {
         console.log(`Backfilling block ${block} for vault ${vaultConfig.id}`);
         const client = getClientForVault(vaultConfig);
         if (vaultConfig.depositRouter) {
-          await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block);
+          await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block, colReferralFees);
         }
         await indexVaultEventsForVault(vaultConfig, client, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colIntents, colMeta, block, block);
         console.log(`✅ Completed backfill for block ${block}`);
@@ -2367,7 +2429,7 @@ app.post('/api/backfill/block', async (req, res) => {
         
         const client = getClientForVault(vaultConfig);
         if (vaultConfig.depositRouter) {
-          await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block);
+          await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block, colReferralFees);
         }
         await indexVaultEventsForVault(vaultConfig, client, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colIntents, colMeta, block, block);
         
@@ -2382,7 +2444,7 @@ app.post('/api/backfill/block', async (req, res) => {
         for (const vaultConfig of VAULTS_CONFIG) {
           const client = getClientForVault(vaultConfig);
           if (vaultConfig.depositRouter) {
-            await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block);
+            await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block, colReferralFees);
           }
           await indexVaultEventsForVault(vaultConfig, client, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colIntents, colMeta, block, block);
         }
@@ -2432,7 +2494,7 @@ app.get('/api/backfill/block', async (req, res) => {
         
         const client = getClientForVault(vaultConfig);
         if (vaultConfig.depositRouter) {
-          await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block);
+          await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block, colReferralFees);
         }
         await indexVaultEventsForVault(vaultConfig, client, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colIntents, colMeta, block, block);
         
@@ -2447,7 +2509,7 @@ app.get('/api/backfill/block', async (req, res) => {
         for (const vaultConfig of VAULTS_CONFIG) {
           const client = getClientForVault(vaultConfig);
           if (vaultConfig.depositRouter) {
-            await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block);
+            await indexDepositRouterEventsForVault(vaultConfig, client, colIntents, colDeposits, block, block, colReferralFees);
           }
           await indexVaultEventsForVault(vaultConfig, client, colDeposits, colWithdrawals, colPendingYieldoWithdrawals, colIntents, colMeta, block, block);
         }

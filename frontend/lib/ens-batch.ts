@@ -1,4 +1,5 @@
 import { createPublicClient, http, Address } from 'viem'
+import { normalize } from 'viem/ens'
 import { mainnet } from 'viem/chains'
 
 const ensClient = createPublicClient({
@@ -86,7 +87,29 @@ export async function resolveEnsName(address: Address): Promise<string | null> {
   }
 }
 
+const ensAddressCache = new Map<string, { address: Address | null; timestamp: number }>()
+
+export async function resolveEnsToAddress(name: string): Promise<Address | null> {
+  const nameLower = name.toLowerCase()
+  const cached = ensAddressCache.get(nameLower)
+  const now = Date.now()
+
+  if (cached && now - cached.timestamp < CACHE_TTL) {
+    return cached.address
+  }
+
+  try {
+    const address = await ensClient.getEnsAddress({ name: normalize(nameLower) })
+    ensAddressCache.set(nameLower, { address: address as Address | null, timestamp: now })
+    return address as Address | null
+  } catch (error) {
+    ensAddressCache.set(nameLower, { address: null, timestamp: now })
+    return null
+  }
+}
+
 export function clearEnsCache() {
   ensCache.clear()
+  ensAddressCache.clear()
 }
 

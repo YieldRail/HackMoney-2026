@@ -19,7 +19,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.DEPOSIT_ROUTER_ADDRESS || '0xA35A1ca41F74FCf1B634C68d61bA127c86590B20',
+    depositRouter: process.env.DEPOSIT_ROUTER_ADDRESS || '0x0f71f178E5fF53c0Dca2f02BE672750C1870C4DB',
     rpcUrls: [
       process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
     ],
@@ -38,7 +38,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.ETHEREUM_DEPOSIT_ROUTER_ADDRESS || '0xC75e95201bC574299a3C849181469B5B3B20cc97',
+    depositRouter: process.env.ETHEREUM_DEPOSIT_ROUTER_ADDRESS || '0xc4418Da01AD12130273d72aC7BC77aaEcf2Cc6C0',
     rpcUrls: [
       ...(process.env.ETHEREUM_RPC_URL ? [process.env.ETHEREUM_RPC_URL] : []),
       'https://1rpc.io/eth',
@@ -61,7 +61,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.BASE_DEPOSIT_ROUTER_ADDRESS || '0xb21d8Ed1a7e2c7d919f50bC2A4B547BC66fAa669',
+    depositRouter: process.env.BASE_DEPOSIT_ROUTER_ADDRESS || '0xdE064d1D41e4d30B913b27f147E228fEe8fd31dc',
     rpcUrls: [
       process.env.BASE_RPC_URL || 'https://base.meowrpc.com',
       'https://base.llamarpc.com',
@@ -83,7 +83,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.ETHEREUM_DEPOSIT_ROUTER_ADDRESS || '0xC75e95201bC574299a3C849181469B5B3B20cc97',
+    depositRouter: process.env.ETHEREUM_DEPOSIT_ROUTER_ADDRESS || '0xc4418Da01AD12130273d72aC7BC77aaEcf2Cc6C0',
     rpcUrls: [
       ...(process.env.ETHEREUM_RPC_URL ? [process.env.ETHEREUM_RPC_URL] : []),
       'https://1rpc.io/eth',
@@ -106,7 +106,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.ETHEREUM_DEPOSIT_ROUTER_ADDRESS || '0xC75e95201bC574299a3C849181469B5B3B20cc97',
+    depositRouter: process.env.ETHEREUM_DEPOSIT_ROUTER_ADDRESS || '0xc4418Da01AD12130273d72aC7BC77aaEcf2Cc6C0',
     rpcUrls: [
       ...(process.env.ETHEREUM_RPC_URL ? [process.env.ETHEREUM_RPC_URL] : []),
       'https://1rpc.io/eth',
@@ -129,7 +129,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.BASE_DEPOSIT_ROUTER_ADDRESS || '0xb21d8Ed1a7e2c7d919f50bC2A4B547BC66fAa669',
+    depositRouter: process.env.BASE_DEPOSIT_ROUTER_ADDRESS || '0xdE064d1D41e4d30B913b27f147E228fEe8fd31dc',
     rpcUrls: [
       process.env.BASE_RPC_URL || 'https://base.meowrpc.com',
       'https://base.llamarpc.com',
@@ -151,7 +151,7 @@ export const VAULTS_CONFIG = [
       symbol: 'USDC',
       decimals: 6,
     },
-    depositRouter: process.env.ARBITRUM_DEPOSIT_ROUTER_ADDRESS,
+    depositRouter: process.env.ARBITRUM_DEPOSIT_ROUTER_ADDRESS || '0xC75e95201bC574299a3C849181469B5B3B20cc97',
     rpcUrls: [
       process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
       'https://1rpc.io/arb',

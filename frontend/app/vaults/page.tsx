@@ -5,7 +5,7 @@ import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { useState, useEffect, useMemo, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { parseUnits, formatUnits, Address, createPublicClient, http, encodeFunctionData } from 'viem'
+import { parseUnits, formatUnits, Address, createPublicClient, http, encodeFunctionData, isAddress } from 'viem'
 import { avalanche, mainnet, base, optimism, arbitrum, bsc } from 'viem/chains'
 import { VAULTS_CONFIG, getVaultById, type VaultConfig } from '@/lib/vaults-config'
 import { SUPPORTED_CHAINS, getTokensForChain, getDepositQuote, checkTransferStatus, getBridgeFromQuote, getQuoteWithContractCall, getQuote, type TokenInfo, type DepositQuote } from '@/lib/lifi'
@@ -24,6 +24,7 @@ import { PendingTransactions } from '@/components/PendingTransactions'
 import { TransactionHistory } from '@/components/TransactionHistory'
 import { WhaleWatcher } from '@/components/WhaleWatcher'
 import { getIndexerApiUrl, getRatingColor, type VaultRating, type VaultRatingMetrics } from '@/lib/vault-ratings'
+import { resolveEnsToAddress } from '@/lib/ens-batch'
 
 const chainConfigs: Record<number, any> = {
   1: mainnet,
@@ -92,6 +93,11 @@ function VaultsPageContent() {
     amount: string
   } | null>(null)
 
+  const [referralInput, setReferralInput] = useState('')
+  const [resolvedReferrer, setResolvedReferrer] = useState<Address | null>(null)
+  const [referralError, setReferralError] = useState<string | null>(null)
+  const [resolvingReferral, setResolvingReferral] = useState(false)
+
   const { data: tokenBalance, refetch: refetchBalance } = useBalance({
     address,
     token: fromToken && !fromToken.isNative ? fromToken.address : undefined,
@@ -137,6 +143,55 @@ function VaultsPageContent() {
     const timeoutId = setTimeout(fetchQuote, 500)
     return () => clearTimeout(timeoutId)
   }, [amount, fromToken, selectedVault, fromChainId, address, chainId, vaultSharesPerAsset, slippage, executing])
+
+  useEffect(() => {
+    if (!referralInput.trim()) {
+      setResolvedReferrer(null)
+      setReferralError(null)
+      setResolvingReferral(false)
+      return
+    }
+
+    const input = referralInput.trim()
+
+    if (input.endsWith('.eth')) {
+      setResolvingReferral(true)
+      setReferralError(null)
+      const timeoutId = setTimeout(async () => {
+        try {
+          const addr = await resolveEnsToAddress(input)
+          if (addr) {
+            setResolvedReferrer(addr)
+            setReferralError(null)
+          } else {
+            setResolvedReferrer(null)
+            setReferralError('Could not resolve ENS name')
+          }
+        } catch {
+          setResolvedReferrer(null)
+          setReferralError('Failed to resolve ENS name')
+        } finally {
+          setResolvingReferral(false)
+        }
+      }, 500)
+      return () => clearTimeout(timeoutId)
+    }
+
+    if (input.startsWith('0x')) {
+      if (isAddress(input)) {
+        setResolvedReferrer(input as Address)
+        setReferralError(null)
+      } else {
+        setResolvedReferrer(null)
+        setReferralError('Invalid address')
+      }
+      setResolvingReferral(false)
+    } else {
+      setResolvedReferrer(null)
+      setReferralError('Enter an ENS name (.eth) or address (0x...)')
+      setResolvingReferral(false)
+    }
+  }, [referralInput])
 
   const fetchVaultState = async () => {
     if (!selectedVault) return
@@ -380,7 +435,7 @@ function VaultsPageContent() {
             const callData = encodeFunctionData({
               abi: DEPOSIT_ROUTER_ABI,
               functionName,
-              args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], '0x' as `0x${string}`],
+              args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], '0x' as `0x${string}`, resolvedReferrer || '0x0000000000000000000000000000000000000000'],
             })
             
             console.log('Requesting contract call quote:', {
@@ -657,7 +712,7 @@ function VaultsPageContent() {
         address: depositRouterAddress,
         abi: DEPOSIT_ROUTER_ABI,
         functionName,
-        args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
+        args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`, resolvedReferrer || '0x0000000000000000000000000000000000000000'],
       })
 
       setTxHashes(prev => ({ ...prev, deposit: depositHash }))
@@ -932,7 +987,7 @@ function VaultsPageContent() {
       const callData = encodeFunctionData({
         abi: DEPOSIT_ROUTER_ABI,
         functionName,
-        args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
+        args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`, resolvedReferrer || '0x0000000000000000000000000000000000000000'],
       })
       
       console.log('Encoded callData:', callData)
@@ -1530,7 +1585,7 @@ function VaultsPageContent() {
         const callData = encodeFunctionData({
           abi: DEPOSIT_ROUTER_ABI,
           functionName,
-          args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
+          args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`, resolvedReferrer || '0x0000000000000000000000000000000000000000'],
         })
 
         const preferredBridges = quote.usedBridge ? [quote.usedBridge] : undefined
@@ -1786,7 +1841,7 @@ function VaultsPageContent() {
             address: depositRouterAddress,
             abi: DEPOSIT_ROUTER_ABI,
             functionName: localFunctionName,
-            args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
+            args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`, resolvedReferrer || '0x0000000000000000000000000000000000000000'],
             chain: chainConfigs[selectedVault.chainId],
           })
 
@@ -2083,7 +2138,7 @@ function VaultsPageContent() {
         address: depositRouterAddress,
         abi: DEPOSIT_ROUTER_ABI,
         functionName,
-        args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`],
+        args: [[intent.user, intent.vault, intent.asset, intent.amount, intent.nonce, intent.deadline], signature as `0x${string}`, resolvedReferrer || '0x0000000000000000000000000000000000000000'],
       })
 
       setTxHashes({ deposit: hash })
@@ -2633,6 +2688,30 @@ function VaultsPageContent() {
                     </div>
                     {hasInsufficientBalance && (
                       <p className="mt-2 text-sm text-red-500">Amount exceeds your available balance</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Referral (optional)</label>
+                    <input
+                      type="text"
+                      value={referralInput}
+                      onChange={(e) => setReferralInput(e.target.value)}
+                      placeholder="ENS name or 0x address"
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:bg-white focus:border-gray-900 focus:ring-1 focus:ring-gray-900 focus:outline-none transition-all"
+                    />
+                    {resolvingReferral && (
+                      <p className="mt-1 text-xs text-gray-500">Resolving ENS...</p>
+                    )}
+                    {referralError && !resolvingReferral && (
+                      <p className="mt-1 text-xs text-red-500">{referralError}</p>
+                    )}
+                    {resolvedReferrer && !resolvingReferral && !referralError && (
+                      <p className="mt-1 text-xs text-green-600">
+                        {referralInput.endsWith('.eth')
+                          ? `Resolved: ${resolvedReferrer.slice(0, 6)}...${resolvedReferrer.slice(-4)}`
+                          : 'Valid address'}
+                      </p>
                     )}
                   </div>
 

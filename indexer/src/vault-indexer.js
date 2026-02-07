@@ -22,7 +22,8 @@ export async function indexDepositRouterEventsForVault(
   colIntents,
   colDeposits,
   fromBlock,
-  toBlock
+  toBlock,
+  colReferralFees
 ) {
   if (!vaultConfig.depositRouter) return;
 
@@ -215,6 +216,42 @@ export async function indexDepositRouterEventsForVault(
       );
 
       console.log(`[${vaultConfig.id}] DepositRequestSubmitted indexed: requestId ${requestId} for user ${user}, amount: ${amount.toString()}, tx: ${log.transactionHash}`);
+    }
+
+    if (colReferralFees) {
+      const referralFeeLogs = await safeGetLogs(vaultConfig, client, {
+        address: vaultConfig.depositRouter,
+        event: parseAbiItem('event ReferralFeeCollected(bytes32 indexed intentHash, address indexed referrer, address indexed asset, uint256 feeAmount)'),
+        fromBlock,
+        toBlock,
+      });
+
+      for (const log of referralFeeLogs) {
+        const { intentHash, referrer, asset, feeAmount } = log.args;
+
+        await colReferralFees.updateOne(
+          { transaction_hash: log.transactionHash, intent_hash: intentHash, chain: vaultConfig.chain },
+          {
+            $setOnInsert: {
+              intent_hash: intentHash,
+              referrer: referrer,
+              asset: asset,
+              asset_symbol: vaultConfig.asset.symbol,
+              asset_decimals: vaultConfig.asset.decimals,
+              fee_amount: feeAmount.toString(),
+              vault_id: vaultConfig.id,
+              vault_name: vaultConfig.name,
+              chain: vaultConfig.chain,
+              block_number: log.blockNumber.toString(),
+              transaction_hash: log.transactionHash,
+              created_at: new Date(),
+            },
+          },
+          { upsert: true }
+        );
+
+        console.log(`[${vaultConfig.id}] ReferralFeeCollected: ${referrer} earned ${feeAmount.toString()} of ${vaultConfig.asset.symbol}, tx: ${log.transactionHash}`);
+      }
     }
   } catch (error) {
     if (error.message && (error.message.includes('after last accepted block') || error.message.includes('requested from block'))) {
@@ -979,11 +1016,11 @@ export async function indexVaultEventsForVault(
 }
 
 export async function indexDepositRouterEventsForChain(vaults, client, collections, fromBlock, toBlock) {
-  const { colIntents, colDeposits } = collections;
+  const { colIntents, colDeposits, colReferralFees } = collections;
   for (const vault of vaults) {
     if (!vault.depositRouter) continue;
     try {
-      await indexDepositRouterEventsForVault(vault, client, colIntents, colDeposits, fromBlock, toBlock);
+      await indexDepositRouterEventsForVault(vault, client, colIntents, colDeposits, fromBlock, toBlock, colReferralFees);
     } catch (error) {
       if (error.name === 'BlockNotFinalizedError') throw error;
       console.error(`[${vault.id}] Error in batch deposit router indexing:`, error.message);

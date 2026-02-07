@@ -42,6 +42,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
 
     mapping(address => uint256) public nonces;
     mapping(bytes32 => DepositRecord) public deposits;
+    mapping(address => mapping(address => uint256)) public referralEarnings;
 
     address public immutable FEE_COLLECTOR;
     uint256 public constant FEE_BPS = 10; // 10 basis points = 0.1%
@@ -91,9 +92,41 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         address executor
     );
 
+    event ReferralFeeCollected(
+        bytes32 indexed intentHash,
+        address indexed referrer,
+        address indexed asset,
+        uint256 feeAmount
+    );
+
     constructor(address _feeCollector) EIP712("DepositRouter", "1") {
         require(_feeCollector != address(0), "Invalid fee collector");
         FEE_COLLECTOR = _feeCollector;
+    }
+
+    function _collectFee(
+        bytes32 intentHash,
+        address asset,
+        uint256 feeAmount,
+        address referrer
+    ) internal {
+        if (feeAmount == 0) return;
+
+        if (referrer != address(0)) {
+            uint256 referralFee = feeAmount / 2;
+            uint256 protocolFee = feeAmount - referralFee;
+            IERC20(asset).safeTransfer(referrer, referralFee);
+            IERC20(asset).safeTransfer(FEE_COLLECTOR, protocolFee);
+            referralEarnings[referrer][asset] += referralFee;
+            emit ReferralFeeCollected(intentHash, referrer, asset, referralFee);
+        } else {
+            IERC20(asset).safeTransfer(FEE_COLLECTOR, feeAmount);
+        }
+        emit FeeCollected(intentHash, asset, feeAmount);
+    }
+
+    function getReferralEarnings(address referrer, address asset) external view returns (uint256) {
+        return referralEarnings[referrer][asset];
     }
 
     /**
@@ -156,28 +189,25 @@ contract DepositRouter is EIP712, ReentrancyGuard {
      */
     function depositWithIntent(
         DepositIntent calldata intent,
-        bytes calldata signature
+        bytes calldata signature,
+        address referrer
     ) external nonReentrant returns (bytes32 intentHash) {
-        return _depositWithIntent(intent, signature, false);
+        return _depositWithIntent(intent, signature, false, referrer);
     }
 
-    /**
-     * @notice Create and execute deposit for ERC4626 vaults (e.g., Morpho)
-     */
     function depositWithIntentERC4626(
         DepositIntent calldata intent,
-        bytes calldata signature
+        bytes calldata signature,
+        address referrer
     ) external nonReentrant returns (bytes32 intentHash) {
-        return _depositWithIntent(intent, signature, true);
+        return _depositWithIntent(intent, signature, true, referrer);
     }
 
-    /**
-     * @notice Internal function to handle deposits for both Lagoon and ERC4626 vaults
-     */
     function _depositWithIntent(
         DepositIntent calldata intent,
         bytes calldata signature,
-        bool isERC4626
+        bool isERC4626,
+        address referrer
     ) internal returns (bytes32 intentHash) {
         require(intent.user != address(0), "Invalid user address");
         require(intent.vault != address(0), "Invalid vault address");
@@ -233,10 +263,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         uint256 feeAmount = (intent.amount * FEE_BPS) / 10000;
         uint256 depositAmount = intent.amount - feeAmount;
 
-        if (feeAmount > 0) {
-            IERC20(intent.asset).safeTransfer(FEE_COLLECTOR, feeAmount);
-            emit FeeCollected(intentHash, intent.asset, feeAmount);
-        }
+        _collectFee(intentHash, intent.asset, feeAmount, referrer);
 
         IERC20(intent.asset).forceApprove(intent.vault, depositAmount);
 
@@ -304,7 +331,8 @@ contract DepositRouter is EIP712, ReentrancyGuard {
      */
     function depositWithIntentRequest(
         DepositIntent calldata intent,
-        bytes calldata signature
+        bytes calldata signature,
+        address referrer
     ) external nonReentrant returns (bytes32 intentHash, uint256 requestId) {
         require(intent.user != address(0), "Invalid user address");
         require(intent.vault != address(0), "Invalid vault address");
@@ -360,10 +388,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         uint256 feeAmount = (intent.amount * FEE_BPS) / 10000;
         uint256 depositAmount = intent.amount - feeAmount;
 
-        if (feeAmount > 0) {
-            IERC20(intent.asset).safeTransfer(FEE_COLLECTOR, feeAmount);
-            emit FeeCollected(intentHash, intent.asset, feeAmount);
-        }
+        _collectFee(intentHash, intent.asset, feeAmount, referrer);
 
         IERC20(intent.asset).forceApprove(intent.vault, depositAmount);
 
@@ -408,10 +433,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         return (intentHash, requestId);
     }
 
-    /**
-     * @notice Execute a deposit intent by transferring assets and calling vault
-     */
-    function executeDeposit(bytes32 intentHash) external nonReentrant {
+    function executeDeposit(bytes32 intentHash, address referrer) external nonReentrant {
         DepositRecord storage record = deposits[intentHash];
 
         require(record.user != address(0), "Intent not found");
@@ -430,10 +452,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         uint256 feeAmount = (record.amount * FEE_BPS) / 10000;
         uint256 depositAmount = record.amount - feeAmount;
 
-        if (feeAmount > 0) {
-            IERC20(record.asset).safeTransfer(FEE_COLLECTOR, feeAmount);
-            emit FeeCollected(intentHash, record.asset, feeAmount);
-        }
+        _collectFee(intentHash, record.asset, feeAmount, referrer);
 
         IERC20(record.asset).forceApprove(record.vault, depositAmount);
 
@@ -549,28 +568,25 @@ contract DepositRouter is EIP712, ReentrancyGuard {
      */
     function depositWithIntentCrossChain(
         DepositIntent calldata intent,
-        bytes calldata signature
+        bytes calldata signature,
+        address referrer
     ) external nonReentrant returns (bytes32 intentHash) {
-        return _depositWithIntentCrossChain(intent, signature, false);
+        return _depositWithIntentCrossChain(intent, signature, false, referrer);
     }
 
-    /**
-     * @notice Cross-chain deposit via LI.FI for ERC4626 vaults (e.g., Morpho)
-     */
     function depositWithIntentCrossChainERC4626(
         DepositIntent calldata intent,
-        bytes calldata signature
+        bytes calldata signature,
+        address referrer
     ) external nonReentrant returns (bytes32 intentHash) {
-        return _depositWithIntentCrossChain(intent, signature, true);
+        return _depositWithIntentCrossChain(intent, signature, true, referrer);
     }
 
-    /**
-     * @notice Internal function to handle cross-chain deposits for both Lagoon and ERC4626 vaults
-     */
     function _depositWithIntentCrossChain(
         DepositIntent calldata intent,
         bytes calldata signature,
-        bool isERC4626
+        bool isERC4626,
+        address referrer
     ) internal returns (bytes32 intentHash) {
         require(intent.user != address(0), "Invalid user address");
         require(intent.vault != address(0), "Invalid vault address");
@@ -640,10 +656,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         uint256 feeAmount = (actualAmount * FEE_BPS) / 10000;
         uint256 depositAmount = actualAmount - feeAmount;
 
-        if (feeAmount > 0) {
-            IERC20(intent.asset).safeTransfer(FEE_COLLECTOR, feeAmount);
-            emit FeeCollected(intentHash, intent.asset, feeAmount);
-        }
+        _collectFee(intentHash, intent.asset, feeAmount, referrer);
 
         IERC20(intent.asset).forceApprove(intent.vault, depositAmount);
 
@@ -707,12 +720,10 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         return intentHash;
     }
 
-    /**
-     * @notice Cross-chain deposit via LI.FI for async/settlement vaults
-     */
     function depositWithIntentCrossChainRequest(
         DepositIntent calldata intent,
-        bytes calldata signature
+        bytes calldata signature,
+        address referrer
     ) external nonReentrant returns (bytes32 intentHash, uint256 requestId) {
         require(intent.user != address(0), "Invalid user address");
         require(intent.vault != address(0), "Invalid vault address");
@@ -779,10 +790,7 @@ contract DepositRouter is EIP712, ReentrancyGuard {
         uint256 feeAmount = (actualAmount * FEE_BPS) / 10000;
         uint256 depositAmount = actualAmount - feeAmount;
 
-        if (feeAmount > 0) {
-            IERC20(intent.asset).safeTransfer(FEE_COLLECTOR, feeAmount);
-            emit FeeCollected(intentHash, intent.asset, feeAmount);
-        }
+        _collectFee(intentHash, intent.asset, feeAmount, referrer);
 
         IERC20(intent.asset).forceApprove(intent.vault, depositAmount);
 

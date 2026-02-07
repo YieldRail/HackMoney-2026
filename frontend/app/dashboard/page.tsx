@@ -90,6 +90,30 @@ interface Snapshot {
   }>
 }
 
+interface ReferralEarning {
+  asset: string
+  asset_symbol: string
+  asset_decimals: number
+  total_earned: string
+  referral_count: number
+}
+
+interface ReferralRecent {
+  intent_hash: string
+  asset_symbol: string
+  asset_decimals: number
+  fee_amount: string
+  vault_name: string
+  chain: string
+  txHash: string
+  timestamp: string
+}
+
+interface ReferralData {
+  earnings: ReferralEarning[]
+  recent: ReferralRecent[]
+}
+
 const formatToken = (amount: string | number | undefined | null, decimals: number = 6): string => {
   if (amount === undefined || amount === null || amount === '') {
     return '0.00'
@@ -150,6 +174,7 @@ export default function Dashboard() {
   const [selectedVaultId, setSelectedVaultId] = useState<string | null>('combined')
   const [initialLoadComplete, setInitialLoadComplete] = useState(false)
   const [claimWithdrawLoading, setClaimWithdrawLoading] = useState(false)
+  const [referralData, setReferralData] = useState<ReferralData | null>(null)
 
   const selectedVault = selectedVaultId && selectedVaultId !== 'combined' ? getVaultById(selectedVaultId) : null
   const chainMatchesVault = selectedVault ? chainId === selectedVault.chainId : false
@@ -318,6 +343,17 @@ export default function Dashboard() {
           })
       )
 
+      apiCalls.push(
+        fetch(`${apiUrl}/api/referral-earnings?address=${address}`)
+          .then(async (res) => {
+            if (res.ok) {
+              const data = await res.json()
+              setReferralData(data)
+            }
+          })
+          .catch(() => {})
+      )
+
       await Promise.all(apiCalls)
       setDataCache(cache)
       setInitialLoadComplete(true)
@@ -428,6 +464,50 @@ export default function Dashboard() {
             <div className="mt-4 pt-4 border-t border-gray-300">
               <p className="text-xs text-gray-400 italic">
                 AUM = Deposits through Yieldo - Withdrawals through Yieldo
+              </p>
+            </div>
+          </div>
+        )}
+
+        {referralData && (referralData.earnings.length > 0 || referralData.recent.length > 0) && (
+          <div className="border-2 border-black p-6 mb-8 bg-gray-50">
+            <h2 className="text-2xl font-bold mb-4">Referral Earnings</h2>
+            {referralData.earnings.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                {referralData.earnings.map((earning) => (
+                  <div key={earning.asset} className="border border-gray-300 p-4 bg-white">
+                    <p className="text-sm text-gray-600 mb-1">{earning.asset_symbol}</p>
+                    <p className="text-2xl font-bold">
+                      {formatToken(earning.total_earned, earning.asset_decimals)} {earning.asset_symbol}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      from {earning.referral_count} referral{earning.referral_count !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {referralData.recent.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-300">
+                <p className="text-sm font-semibold mb-2">Recent Referral Fees</p>
+                <div className="space-y-2">
+                  {referralData.recent.slice(0, 5).map((r) => (
+                    <div key={r.intent_hash} className="flex justify-between items-center text-sm border border-gray-200 p-3 bg-white">
+                      <div>
+                        <span className="font-semibold">{formatToken(r.fee_amount, r.asset_decimals)} {r.asset_symbol}</span>
+                        <span className="text-gray-500 ml-2">{r.vault_name} ({r.chain})</span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {r.timestamp ? new Date(r.timestamp).toLocaleString() : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="mt-4 pt-4 border-t border-gray-300">
+              <p className="text-xs text-gray-400">
+                Share your address or ENS name with others. When they use your referral during deposit, you earn 5 BPS of their deposit amount.
               </p>
             </div>
           </div>

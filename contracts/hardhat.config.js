@@ -40,7 +40,7 @@ module.exports = {
         network: "avalanche",
         chainId: 43114,
         urls: {
-          apiURL: "https://api.snowtrace.io/api",
+          apiURL: "https://api.routescan.io/v2/network/mainnet/evm/43114/etherscan/api",
           browserURL: "https://snowtrace.io"
         }
       }
