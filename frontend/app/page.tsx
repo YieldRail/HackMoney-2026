@@ -44,8 +44,8 @@ export default function Home() {
 
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="text-center mb-16">
-          <h2 className="text-5xl font-bold mb-4">Find the Best Yield Vaults</h2>
-          <p className="text-xl text-gray-700 mb-4">We curate top vaults across protocols so you can deposit with confidence from any chain</p>
+          <h1 className="text-5xl font-bold mb-4">Find Better Yield</h1>
+          <h2 className="text-xl text-gray-700 mb-4">Curated strategies. Clear risk signals. One-tap deposits across chains.</h2>
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-full border border-gray-200">
             <span className="text-xs text-gray-600">Cross-chain deposits powered by</span>
             <img src="/lifi.png" alt="LI.FI" className="h-4" />
@@ -81,7 +81,14 @@ export default function Home() {
                   }
                   return (
                     <tr key={vault.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 font-semibold">{vault.name}</td>
+                      <td className="px-4 py-3 font-semibold">
+                        <Link
+                          href={`/vaults?vault=${vault.id}`}
+                          className="text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                        >
+                          {vault.name}
+                        </Link>
+                      </td>
                       <td className="px-4 py-3 text-sm text-gray-600 capitalize">{vault.chain}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{vault.asset.symbol}</td>
                       <td className="px-4 py-3 text-right font-medium">{formatTVL(tvlUsd)}</td>

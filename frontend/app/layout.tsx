@@ -5,6 +5,9 @@ import { Providers } from './providers'
 export const metadata: Metadata = {
   title: 'Yieldo - Find the Best Yield Vaults',
   description: 'We curate top vaults across protocols so you can deposit with confidence from any chain',
+  icons: {
+    icon: '/Favicon.png',
+  },
 }
 
 export default function RootLayout({

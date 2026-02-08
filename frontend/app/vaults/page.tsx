@@ -97,7 +97,7 @@ function VaultsPageContent() {
   const [resolvedReferrer, setResolvedReferrer] = useState<Address | null>(null)
   const [referralError, setReferralError] = useState<string | null>(null)
   const [resolvingReferral, setResolvingReferral] = useState(false)
-  const [showVaultMetrics, setShowVaultMetrics] = useState(false)
+  const [showVaultMetrics, setShowVaultMetrics] = useState(true)
 
   const { data: tokenBalance, refetch: refetchBalance } = useBalance({
     address,
@@ -132,7 +132,7 @@ function VaultsPageContent() {
     if (selectedVault) {
       fetchVaultState()
       fetchVaultRating()
-      setShowVaultMetrics(false)
+      setShowVaultMetrics(true)
     }
   }, [selectedVault])
 
@@ -2348,7 +2348,7 @@ function VaultsPageContent() {
                   {vaultRating?.vault_name || morphoVaultData?.name || selectedVault.name}
                 </span>
                 <span className="text-gray-400">-</span>
-                <span>{showVaultMetrics ? 'Hide Vault Info' : 'View Vault Metrics'}</span>
+                <span>{showVaultMetrics ? 'Hide Vault Info' : 'View Vault Info'}</span>
                 {loadingVaultRating && (
                   <span className="text-xs text-gray-400">(Loading...)</span>
                 )}
