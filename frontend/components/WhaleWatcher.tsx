@@ -249,7 +249,6 @@ export function WhaleWatcher({
     return null // Don't show anything if no data
   }
 
-  // Show all by default, only use expand/collapse if there are more than 20 depositors
   const shouldUseExpand = data.depositors.length > 20
   const displayedWhales = shouldUseExpand && !expanded 
     ? data.depositors.slice(0, 20) 

@@ -5,8 +5,7 @@ import ERC20_ABI from './erc20-abi.json'
 
 const MORPHO_API_URL = 'https://api.morpho.org/graphql'
 
-// Cache configuration
-const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+const CACHE_DURATION = 5 * 60 * 1000
 const VAULT_CACHE_KEY = 'morpho_vault_cache'
 const POSITION_CACHE_KEY = 'morpho_position_cache'
 
@@ -24,7 +23,6 @@ function getFromCache<T>(key: string, subKey: string): T | null {
     const entry = parsed[subKey]
     if (!entry) return null
     if (Date.now() - entry.timestamp > CACHE_DURATION) {
-      // Cache expired, remove it
       delete parsed[subKey]
       localStorage.setItem(key, JSON.stringify(parsed))
       return null
@@ -43,7 +41,6 @@ function setToCache<T>(key: string, subKey: string, data: T): void {
     parsed[subKey] = { data, timestamp: Date.now() }
     localStorage.setItem(key, JSON.stringify(parsed))
   } catch {
-    // Ignore cache errors
   }
 }
 
@@ -142,13 +139,10 @@ async function morphoGraphQL<T>(query: string, variables?: Record<string, unknow
 
   const result = await response.json()
 
-  // Handle partial errors gracefully - if we have data, return it even if some vaults had errors
-  // This is common when querying multiple vaults where some addresses might not exist
   if (result.errors && !result.data) {
     throw new Error(`GraphQL error: ${result.errors[0]?.message}`)
   }
 
-  // Log partial errors for debugging but don't throw
   if (result.errors && result.data) {
     console.log(`GraphQL partial errors (${result.errors.length} vaults not found, but got data for others)`)
   }
@@ -156,9 +150,7 @@ async function morphoGraphQL<T>(query: string, variables?: Record<string, unknow
   return result.data
 }
 
-// Fetch vault data from Morpho API (tries V1 first, then V2)
 export async function fetchMorphoVaultFromApi(vaultAddress: string, chainId: number): Promise<MorphoApiVaultData | null> {
-  // Check cache first
   const cacheKey = `${vaultAddress.toLowerCase()}_${chainId}`
   const cached = getFromCache<MorphoApiVaultData>(VAULT_CACHE_KEY, cacheKey)
   if (cached) {
@@ -166,7 +158,6 @@ export async function fetchMorphoVaultFromApi(vaultAddress: string, chainId: num
     return cached
   }
 
-  // Try V1 vault query first (most Morpho vaults are V1)
   const v1Query = `
     query GetVaultV1($address: String!, $chainId: Int) {
       vaultByAddress(address: $address, chainId: $chainId) {
@@ -219,12 +210,10 @@ export async function fetchMorphoVaultFromApi(vaultAddress: string, chainId: num
           decimals: vault.asset?.decimals || 18,
         },
       }
-      // Cache successful result
       setToCache(VAULT_CACHE_KEY, cacheKey, result)
       return result
     }
   } catch (error: any) {
-    // Check if it's a NOT_FOUND error - if so, try V2
     const isNotFound = error?.message?.includes('NOT_FOUND') || error?.message?.includes('cannot find')
     if (!isNotFound) {
       console.error('V1 vault query error:', error)
@@ -233,7 +222,6 @@ export async function fetchMorphoVaultFromApi(vaultAddress: string, chainId: num
     }
   }
 
-  // Try V2 vault query as fallback
   const v2Query = `
     query GetVaultV2($address: String!, $chainId: Int!) {
       vaultV2ByAddress(address: $address, chainId: $chainId) {
@@ -283,7 +271,6 @@ export async function fetchMorphoVaultFromApi(vaultAddress: string, chainId: num
           decimals: vault.asset?.decimals || 18,
         },
       }
-      // Cache successful result
       setToCache(VAULT_CACHE_KEY, cacheKey, result)
       return result
     }
@@ -294,13 +281,11 @@ export async function fetchMorphoVaultFromApi(vaultAddress: string, chainId: num
   return null
 }
 
-// Fetch user's position in a Morpho vault (tries V1 and V2)
 export async function fetchMorphoUserPosition(
   userAddress: string,
   vaultAddress: string,
   chainId: number
 ): Promise<MorphoUserPosition | null> {
-  // Try V1 position query first
   const v1Query = `
     query GetUserVaultPosition($userAddress: String!, $vaultAddress: String!, $chainId: Int) {
       vaultPosition(userAddress: $userAddress, vaultAddress: $vaultAddress, chainId: $chainId) {
@@ -961,7 +946,7 @@ export async function fetchTopVaultPositions(
       })
     }
 
-    // Convert to array and sort by total
+    
     const whales = Array.from(whaleMap.values())
       .sort((a, b) => b.totalAssetsUsd - a.totalAssetsUsd)
 
@@ -987,7 +972,7 @@ export async function fetchAggregatedWhales(
   return fetchTopVaultPositions(limit * 2)
 }
 
-// Also export a function to fetch top vaults list from Morpho API
+
 export async function fetchTopMorphoVaults(minTvlUsd: number = 1000000): Promise<{ address: string; name: string; chainId: number; tvlUsd: number }[]> {
   const query = `
     query GetTopVaults($first: Int!) {
