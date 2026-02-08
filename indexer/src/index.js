@@ -2049,7 +2049,11 @@ app.get('/api/aum', async (req, res) => {
 
     for (const vaultInfo of vaultsToProcess) {
       const vaultConfig = vaultInfo.id ? getVaultById(vaultInfo.id) : vaultInfo;
-      if (!vaultConfig) continue;
+      if (!vaultConfig) {
+        console.log(`[AUM] Skipping vault: ${vaultInfo.id || 'unknown'} - not found in config`);
+        continue;
+      }
+      
       const vaultDeposits = yieldoDeposits.filter(d => 
         d.vault_id && d.chain && d.vault_id === vaultConfig.id && d.chain === vaultConfig.chain
       );
@@ -2062,64 +2066,36 @@ app.get('/api/aum', async (req, res) => {
         0n
       );
       
-      const client = getClientForVault(vaultConfig);
-      let vault = null;
-      try {
-        vault = await Vault.fetch(vaultConfig.address, client);
-      } catch (error) {
-        console.error(`Error fetching vault ${vaultConfig.id}:`, error);
-        continue;
-      }
-
       let vaultWithdrawalsAmount = 0n;
       for (const w of vaultWithdrawals) {
         if (w.assets) {
           vaultWithdrawalsAmount += BigInt(w.assets);
-        } else if (w.shares && vault && vault.totalSupply > 0n) {
-          try {
-            const sharesBigInt = BigInt(w.shares);
-            const estimatedAssets = vault.convertToAssets(sharesBigInt);
-            vaultWithdrawalsAmount += estimatedAssets;
-          } catch (error) {
-            console.error(`Error converting shares for withdrawal ${w._id}:`, error);
-          }
         }
-      }
-
-      let vaultUserBalance = 0n;
-      try {
-        const userShares = await client.readContract({
-          address: vaultConfig.address,
-          abi: erc4626Abi,
-          functionName: 'balanceOf',
-          args: [user],
-        });
-        
-        if (vault.totalSupply > 0n && userShares > 0n) {
-          vaultUserBalance = vault.convertToAssets(userShares);
-        }
-      } catch (error) {
-        console.error(`Error fetching user balance in vault ${vaultConfig.id}:`, error);
       }
       
-      const theoreticalAUM = vaultDepositsAmount - vaultWithdrawalsAmount;
-      const actualVaultAUM = theoreticalAUM > vaultUserBalance 
-        ? vaultUserBalance 
-        : theoreticalAUM;
+      const actualVaultAUM = vaultDepositsAmount > vaultWithdrawalsAmount 
+        ? vaultDepositsAmount - vaultWithdrawalsAmount 
+        : 0n;
+      
+      console.log(`[AUM] Processing vault ${vaultConfig.id} (${vaultConfig.name}): deposits=${vaultDepositsAmount.toString()}, withdrawals=${vaultWithdrawalsAmount.toString()}, AUM=${actualVaultAUM.toString()}`);
       
       totalAUM += actualVaultAUM;
       totalDepositsYieldo += vaultDepositsAmount;
       totalWithdrawalsYieldo += vaultWithdrawalsAmount;
       
-      vaultBreakdown.push({
-        vault_id: vaultConfig.id,
-        vault_name: vaultConfig.name,
-        chain: vaultConfig.chain,
-        asset_symbol: vaultConfig.asset.symbol,
-        aum: actualVaultAUM.toString(),
-        deposits: vaultDepositsAmount.toString(),
-        withdrawals: vaultWithdrawalsAmount.toString(),
-      });
+      if (vaultDepositsAmount > 0n) {
+        const breakdownEntry = {
+          vault_id: vaultConfig.id,
+          vault_name: vaultConfig.name,
+          chain: vaultConfig.chain,
+          asset_symbol: vaultConfig.asset.symbol,
+          aum: actualVaultAUM.toString(),
+          deposits: vaultDepositsAmount.toString(),
+          withdrawals: vaultWithdrawalsAmount.toString(),
+        };
+        vaultBreakdown.push(breakdownEntry);
+        console.log(`[AUM] Added vault to breakdown: ${vaultConfig.id} (${vaultConfig.name}), AUM=${actualVaultAUM.toString()}, deposits=${vaultDepositsAmount.toString()}, withdrawals=${vaultWithdrawalsAmount.toString()}`);
+      }
     }
 
     res.json({

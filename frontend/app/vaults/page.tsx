@@ -62,6 +62,7 @@ function VaultsPageContent() {
   const [loadingMorphoData, setLoadingMorphoData] = useState(false)
   const [vaultRating, setVaultRating] = useState<VaultRating | null>(null)
   const [loadingVaultRating, setLoadingVaultRating] = useState(false)
+  const [vaultAUM, setVaultAUM] = useState<{ aum: string; deposits: string; withdrawals: string } | null>(null)
   const [vaultSharesPerAsset, setVaultSharesPerAsset] = useState<bigint>(BigInt(10 ** 30))
   const [executing, setExecuting] = useState(false)
   const [executionStatus, setExecutionStatus] = useState<string | null>(null)
@@ -132,9 +133,10 @@ function VaultsPageContent() {
     if (selectedVault) {
       fetchVaultState()
       fetchVaultRating()
+      fetchVaultAUM()
       setShowVaultMetrics(true)
     }
-  }, [selectedVault])
+  }, [selectedVault, address])
 
   useEffect(() => {
     if (!executing) fetchTokens()
@@ -313,6 +315,33 @@ function VaultsPageContent() {
       console.error('Error fetching vault rating:', error)
     } finally {
       setLoadingVaultRating(false)
+    }
+  }
+
+  const fetchVaultAUM = async () => {
+    if (!selectedVault || !address) {
+      setVaultAUM(null)
+      return
+    }
+    try {
+      const apiUrl = getIndexerApiUrl()
+      const url = `${apiUrl}/api/aum?user=${address}&vault_id=${encodeURIComponent(selectedVault.id)}&chain=${encodeURIComponent(selectedVault.chain)}`
+      const response = await fetch(url)
+      if (response.ok) {
+        const data = await response.json()
+        if (data && data.aumFromYieldo) {
+          setVaultAUM({
+            aum: data.aumFromYieldo,
+            deposits: data.totalDepositsYieldo || '0',
+            withdrawals: data.totalWithdrawalsYieldo || '0',
+          })
+        } else {
+          setVaultAUM(null)
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching vault AUM:', error)
+      setVaultAUM(null)
     }
   }
 
@@ -2459,23 +2488,46 @@ function VaultsPageContent() {
                     </div>
                   )}
 
-                  {/* User Position (if connected) */}
-                  {morphoVaultData?.userShares && BigInt(morphoVaultData.userShares) > 0n && (
+                  {/* User Position (if connected) - Show Yieldo AUM instead of on-chain balance */}
+                  {address && (vaultAUM || (morphoVaultData?.userShares && BigInt(morphoVaultData.userShares) > 0n)) && (
                     <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
-                      <h4 className="text-xs font-semibold text-blue-700 mb-2">Your Position</h4>
+                      <h4 className="text-xs font-semibold text-blue-700 mb-2">Your Position (Yieldo)</h4>
                       <div className="flex gap-6">
-                        <div>
-                          <p className="text-xs text-blue-500">Shares</p>
-                          <p className="font-bold text-blue-900">{(Number(morphoVaultData.userShares) / 10 ** 18).toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-blue-500">Value</p>
-                          <p className="font-bold text-blue-900">
-                            {morphoVaultData.userAssetsUsd ? `$${morphoVaultData.userAssetsUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` :
-                              `${(Number(morphoVaultData.userAssets || 0) / 10 ** morphoVaultData.assetDecimals).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${morphoVaultData.assetSymbol}`}
-                          </p>
-                        </div>
+                        {vaultAUM && parseFloat(vaultAUM.aum) > 0 && (
+                          <>
+                            <div>
+                              <p className="text-xs text-blue-500">AUM (Yieldo)</p>
+                              <p className="font-bold text-blue-900">
+                                ${(parseFloat(vaultAUM.aum) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-blue-500">Deposits</p>
+                              <p className="font-bold text-blue-900">
+                                ${(parseFloat(vaultAUM.deposits) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                              </p>
+                            </div>
+                          </>
+                        )}
+                        {morphoVaultData?.userShares && BigInt(morphoVaultData.userShares) > 0n && !vaultAUM && (
+                          <>
+                            <div>
+                              <p className="text-xs text-blue-500">Shares</p>
+                              <p className="font-bold text-blue-900">{(Number(morphoVaultData.userShares) / 10 ** 18).toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-blue-500">Value</p>
+                              <p className="font-bold text-blue-900">
+                                {morphoVaultData.userAssetsUsd ? `$${morphoVaultData.userAssetsUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` :
+                                  `${(Number(morphoVaultData.userAssets || 0) / 10 ** morphoVaultData.assetDecimals).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${morphoVaultData.assetSymbol}`}
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
+                      {vaultAUM && parseFloat(vaultAUM.aum) > 0 && (
+                        <p className="text-xs text-gray-500 mt-2">Based on Yieldo deposits only</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2515,22 +2567,45 @@ function VaultsPageContent() {
                       )}
                 </div>
               </div>
-              {morphoVaultData.userShares && BigInt(morphoVaultData.userShares) > 0n && (
+              {address && (vaultAUM || (morphoVaultData.userShares && BigInt(morphoVaultData.userShares) > 0n)) && (
                     <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
-                  <h4 className="text-xs font-semibold text-blue-700 mb-2">Your Position</h4>
-                  <div className="flex gap-6">
-                    <div>
-                      <p className="text-xs text-blue-500">Shares</p>
-                      <p className="font-bold text-blue-900">{(Number(morphoVaultData.userShares) / 10 ** 18).toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-blue-500">Value</p>
-                      <p className="font-bold text-blue-900">
-                        {morphoVaultData.userAssetsUsd ? `$${morphoVaultData.userAssetsUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` :
-                          `${(Number(morphoVaultData.userAssets || 0) / 10 ** morphoVaultData.assetDecimals).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${morphoVaultData.assetSymbol}`}
-                      </p>
-                    </div>
-                  </div>
+                      <h4 className="text-xs font-semibold text-blue-700 mb-2">Your Position (Yieldo)</h4>
+                      <div className="flex gap-6">
+                        {vaultAUM && parseFloat(vaultAUM.aum) > 0 && (
+                          <>
+                            <div>
+                              <p className="text-xs text-blue-500">AUM (Yieldo)</p>
+                              <p className="font-bold text-blue-900">
+                                ${(parseFloat(vaultAUM.aum) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-blue-500">Deposits</p>
+                              <p className="font-bold text-blue-900">
+                                ${(parseFloat(vaultAUM.deposits) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                              </p>
+                            </div>
+                          </>
+                        )}
+                        {morphoVaultData.userShares && BigInt(morphoVaultData.userShares) > 0n && !vaultAUM && (
+                          <>
+                            <div>
+                              <p className="text-xs text-blue-500">Shares</p>
+                              <p className="font-bold text-blue-900">{(Number(morphoVaultData.userShares) / 10 ** 18).toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-blue-500">Value</p>
+                              <p className="font-bold text-blue-900">
+                                {morphoVaultData.userAssetsUsd ? `$${morphoVaultData.userAssetsUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` :
+                                  `${(Number(morphoVaultData.userAssets || 0) / 10 ** morphoVaultData.assetDecimals).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${morphoVaultData.assetSymbol}`}
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      {vaultAUM && parseFloat(vaultAUM.aum) > 0 && (
+                        <p className="text-xs text-gray-500 mt-2">Based on Yieldo deposits only</p>
+                      )}
                     </div>
                   )}
                 </div>
